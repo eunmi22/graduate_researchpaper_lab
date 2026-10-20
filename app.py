@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from paperlab import (
     API_NAME, SOURCE_URL, PaperAPIError, calculate_trends, extract_pdf_text,
-    make_reference, prepare_evidence, search_papers, select_type,
+    make_reference, prepare_evidence, search_candidates, search_papers, select_type,
     summarize_paper, summary_lines,
 )
 from reporting import create_excel, create_pdf_report
@@ -86,19 +86,27 @@ with st.sidebar:
     st.header("🔎 논문 주제 검색")
     admin_key = admin_api_key()
     if admin_key:
-        st.caption("✅ 국회도서관 검색 API 연결 설정 완료")
+        st.caption("✅ 국회도서관 API 키 읽기 완료 (실제 연결은 검색 시 확인)")
     else:
         st.warning("관리자 API 키가 없어 검색할 수 없습니다. PDF 직접 분석은 가능합니다.")
 
-    # 사이드바에서 검색 조건을 입력하며, 검색 결과는 오른쪽 탭에 표시합니다.
+    # 검색 조건은 사이드바, 실제 검색 상태와 결과는 오른쪽에 표시.
     with st.form("search_form", clear_on_submit=False):
         keyword = st.text_input(
             "검색할 논문 주제",
             value=st.session_state.get("search_keyword", "데이터베이스 포렌식"),
             placeholder="예: 데이터베이스 포렌식",
         )
+        search_field = st.selectbox(
+            "검색 대상", ["전체", "자료명", "키워드"], index=0,
+            help="국회도서관 자료검색 API의 공식 검색항목입니다.",
+        )
         pages = st.selectbox("검색 페이지 수", [1, 2, 3, 4, 5], index=1)
         per_page = st.selectbox("페이지당 검색 건수", [5, 10, 15, 20], index=1)
+        automatic_retry = st.checkbox(
+            "검색 결과가 0건이면 핵심 단어로 재검색", value=True,
+            help="예: '데이터베이스 포렌식'이 0건이면 '포렌식'으로 다시 검색하고 결과에 표시합니다.",
+        )
         searched = st.form_submit_button(
             "🔎 논문 검색 실행", type="primary", use_container_width=True,
             disabled=not bool(admin_key),
@@ -107,27 +115,65 @@ with st.sidebar:
     if searched:
         now = time.monotonic()
         recent = [t for t in st.session_state.get("search_events", []) if now - t < 3600]
+        st.session_state.pop("search_notice", None)
         if len(recent) >= 12:
             st.session_state.search_notice = (
                 "error", "이 브라우저 세션은 1시간에 최대 12회 검색할 수 있습니다."
             )
         else:
-            st.session_state.search_events = recent + [now]
             try:
-                with st.spinner("국회도서관 논문을 검색하는 중..."):
-                    total, result_df = search_papers(
-                        admin_key, keyword, pages=pages, per_page=per_page
-                    )
-                st.session_state.paper_df = result_df
+                candidates = search_candidates(keyword, automatic_retry)
+                attempts = []
+                final_df = pd.DataFrame()
+                final_total = 0
+                used_keyword = candidates[0]
+                with st.spinner("국회도서관 API를 검색하는 중..."):
+                    for candidate in candidates:
+                        # 실제 요청마다 호출량 계산: 자동 재검색 역시 1회로 계산.
+                        if len(recent) + len(attempts) >= 12:
+                            break
+                        total, result_df = search_papers(
+                            admin_key, candidate, pages=pages,
+                            per_page=per_page, search_field=search_field,
+                        )
+                        attempts.append((candidate, total, len(result_df)))
+                        final_total, final_df, used_keyword = total, result_df, candidate
+                        if not result_df.empty or total > 0:
+                            break
+                st.session_state.search_events = recent + [now] * len(attempts)
+                st.session_state.search_attempts = attempts
+                st.session_state.paper_df = final_df
                 st.session_state.search_keyword = keyword.strip()
-                st.session_state.total_count = total
+                st.session_state.search_used_keyword = used_keyword
+                st.session_state.search_field = search_field
+                st.session_state.total_count = final_total
                 st.session_state.pop("summary_result", None)
                 st.session_state.pop("summary_context", None)
                 st.session_state.pop("selected_idx", None)
                 st.session_state.pop("sidebar_types", None)
-                st.session_state.search_notice = (
-                    "success", f"검색 완료! 오른쪽 화면에 {len(result_df):,}건이 표시됩니다."
-                ) if not result_df.empty else ("info", "검색 결과가 없습니다. 검색어를 조정하세요.")
+
+                if not final_df.empty:
+                    if used_keyword != keyword.strip():
+                        message = (
+                            f"입력 검색어 '{keyword.strip()}'는 결과가 없어 "
+                            f"'{used_keyword}'(으)로 확장 검색했습니다. "
+                            f"수집 {len(final_df):,}건 / API 전체 {final_total:,}건."
+                        )
+                    else:
+                        message = f"검색 성공: 수집 {len(final_df):,}건 / API 전체 {final_total:,}건."
+                    st.session_state.search_notice = ("success", message)
+                elif final_total > 0:
+                    st.session_state.search_notice = (
+                        "error",
+                        f"API에서는 전체 {final_total:,}건이라고 응답했으나, 자료 목록(record)이 "
+                        "파싱되지 않았습니다. 제공기관의 XML 응답 구조 확인이 필요합니다.",
+                    )
+                else:
+                    checked = ", ".join(f"'{term}'" for term, _, _ in attempts)
+                    st.session_state.search_notice = (
+                        "info", f"API 응답은 정상이나 검색 결과가 0건입니다. "
+                        f"시도한 검색어: {checked}. '자료명' 또는 다른 검색어도 시험해 보세요.",
+                    )
             except (PaperAPIError, ValueError) as exc:
                 st.session_state.search_notice = ("error", str(exc))
             except Exception as exc:
@@ -198,7 +244,11 @@ with search_tab:
         m1.metric("API 전체 검색 결과", f"{st.session_state.get('total_count', 0):,}건")
         m2.metric("현재 수집된 자료", f"{len(df):,}건")
         m3.metric("유형 필터 적용", f"{len(filtered):,}건")
-        st.caption("전체 검색 결과 수와 수집 건수는 다릅니다. 통계는 실제 수집한 자료만 대상으로 합니다.")
+        st.caption(
+            f"실제 API 검색어: {st.session_state.get('search_used_keyword', '')} "
+            f"(검색 대상: {st.session_state.get('search_field', '전체')}) · "
+            "전체 검색 결과 수와 수집 건수는 다릅니다. 통계는 실제 수집한 자료만 대상으로 합니다."
+        )
         if not filtered.empty:
             st.dataframe(filtered, use_container_width=True, hide_index=True)
         else:
@@ -206,8 +256,22 @@ with search_tab:
         st.info("논문 분석 시 오른쪽 '논문 AI 요약' 탭에서 초록 또는 PDF를 추가해야 합니다.")
     elif not admin_key:
         st.info("관리자가 DATA_GO_KR_API_KEY를 설정하면 검색할 수 있습니다. 직접 업로드 분석은 가능합니다.")
+    elif st.session_state.get("search_attempts"):
+        st.caption("검색 요청은 실행되었습니다. 시도한 단어별 건수를 아래에서 확인하세요.")
     else:
         st.info("왼쪽에서 검색어를 입력하고 '논문 검색 실행' 버튼을 눌러 주세요.")
+
+    if st.session_state.get("search_attempts"):
+        with st.expander("🔧 API 검색 진단 (검색어·건수만 표시, 인증키 제외)"):
+            attempts_df = pd.DataFrame(
+                st.session_state.search_attempts,
+                columns=["요청 검색어", "API 전체 건수", "수집된 자료 수"],
+            )
+            st.dataframe(attempts_df, hide_index=True, use_container_width=True)
+            st.caption(
+                f"검색 대상: {st.session_state.get('search_field', '전체')} · "
+                "실제 결과가 0건이면 다른 검색어 또는 검색 대상을 사용하세요."
+            )
 
 with ai_tab:
     st.subheader("2. 논문 선택 및 근거 자료 업로드")
