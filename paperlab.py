@@ -71,13 +71,36 @@ def parse_search_xml(xml_data: bytes) -> tuple[int, list[dict]]:
     return total, rows
 
 
+def search_candidates(keyword: str, automatic_retry: bool = True) -> list[str]:
+    """복합 검색어에 결과가 없을 경우 사용할 핵심 단어 후보를 반환.
+
+    '데이터베이스 포렌식' -> ['데이터베이스 포렌식', '포렌식']
+    원 검색어와 확장 검색어를 혼동하지 않도록 UI에 실제 사용 검색어를 표시해야 함.
+    """
+    keyword = " ".join((keyword or "").split())
+    if not keyword:
+        raise ValueError("검색어를 입력하세요.")
+    candidates = [keyword]
+    if not automatic_retry:
+        return candidates
+    words = keyword.split()
+    ignore = {"관련", "연구", "논문", "방법", "기술", "사례", "활용", "분석", "대한", "및", "위한", "개발", "적용", "동향"}
+    for word in reversed(words):
+        if len(word) >= 2 and word not in ignore and word != keyword:
+            candidates.append(word)
+            break
+    return candidates
+
+
 def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10,
-                  session=None) -> tuple[int, pd.DataFrame]:
+                  session=None, search_field: str = "전체") -> tuple[int, pd.DataFrame]:
     """공식 basic 검색. 문서 규정: serviceKey/pageno/displaylines/search 필수."""
     key = normalize_key(api_key)
     keyword = (keyword or "").strip()
     if not keyword:
         raise ValueError("검색어를 입력하세요.")
+    if search_field not in {"전체", "자료명", "키워드"}:
+        raise ValueError("검색 대상은 전체/자료명/키워드 중에서 선택하세요.")
     if not (1 <= pages <= 5 and 1 <= per_page <= 20):
         raise ValueError("검색 페이지는 1~5, 페이지당 결과는 1~20으로 제한합니다.")
     client = session if session is not None else requests
@@ -86,7 +109,7 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
     for page in range(1, pages + 1):
         params = {
             "serviceKey": key, "pageno": page,
-            "displaylines": per_page, "search": f"전체,{keyword}",
+            "displaylines": per_page, "search": f"{search_field},{keyword}",
         }
         try:
             response = client.get(API_BASE_URL, params=params, timeout=(6, 25))
