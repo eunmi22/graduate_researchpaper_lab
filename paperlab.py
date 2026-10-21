@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from io import BytesIO
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
@@ -32,8 +33,114 @@ def normalize_key(key: str) -> str:
     return unquote(key.strip())
 
 
+def _local_tag(tag: str) -> str:
+    """XML 네임스페이스({주소}record)와 대소문자를 제거한 태그 이름."""
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1].split(":")[-1].strip().lower()
+
+
+def _first_descendant_text(root: ET.Element, tag_name: str) -> str:
+    """이름공간 유무와 무관하게 첫 일치 태그의 문자열 값을 반환."""
+    target = tag_name.lower()
+    for node in root.iter():
+        if _local_tag(node.tag) == target:
+            return "".join(node.itertext()).strip()
+    return ""
+
+
+def _direct_child_text(node: ET.Element, tag_name: str) -> str:
+    """필드(item) 내부에서 직접 자식 <name> / <value>만 읽기."""
+    target = tag_name.lower()
+    for child in node:
+        if _local_tag(child.tag) == target:
+            return "".join(child.itertext()).strip()
+    return ""
+
+
+def describe_xml_structure(xml_data: bytes) -> dict:
+    """사용자 인증키·논문 내용 없이 XML 태그 구조만 진단.
+
+    원문 XML이나 요청 URL을 출력하지 않으므로 공개 웹앱 진단창에 적합.
+    """
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError:
+        return {"root": "XML 해석 실패", "record_nodes": 0, "item_nodes": 0,
+                "tag_counts": "", "paths": "", "bytes": len(xml_data)}
+    tags = Counter(_local_tag(e.tag) for e in root.iter())
+    paths = []
+
+    def walk(node, prefix="", depth=0):
+        if depth > 5 or len(paths) >= 16:
+            return
+        path = f"{prefix}/{_local_tag(node.tag)}"
+        # 구조와 태그 이름만 포함하고 XML 값/속성은 결코 포함하지 않음.
+        if path not in paths:
+            paths.append(path)
+        for child in list(node)[:8]:
+            walk(child, path, depth + 1)
+
+    walk(root)
+    return {
+        "root": _local_tag(root.tag),
+        "top_level": ", ".join(_local_tag(c.tag) for c in list(root)[:12]),
+        "record_nodes": tags.get("record", 0),
+        "row_nodes": tags.get("row", 0),
+        "item_nodes": tags.get("item", 0),
+        "name_nodes": tags.get("name", 0),
+        "value_nodes": tags.get("value", 0),
+        "tag_counts": ", ".join(f"{name}:{count}" for name, count in tags.most_common(20)),
+        "paths": " | ".join(paths),
+        "bytes": len(xml_data),
+    }
+
+
+def _parse_record(record: ET.Element) -> dict:
+    """기술문서의 name/value 목록 및 직접 필드형 레코드를 모두 처리."""
+    row = {}
+    direct_items = [child for child in record if _local_tag(child.tag) == "item"]
+
+    if direct_items:
+        for item in direct_items:
+            name = _direct_child_text(item, "name")
+            value = _direct_child_text(item, "value")
+            # 제공기관이 필드명을 item 속성으로 내려주는 변형도 처리.
+            if not name:
+                name = (item.get("name") or item.get("key") or "").strip()
+                if name and not value:
+                    value = "".join(item.itertext()).strip()
+            if name:
+                value = value.strip()
+                if value:
+                    row[name] = "; ".join(filter(None, [row.get(name), value]))
+        if row:
+            return row
+
+    # <record><controlno>..</controlno><year>..</year>...</record> 형태.
+    aliases = {
+        "title": "자료명/저자사항", "titleauthor": "자료명/저자사항",
+        "publisher": "발행자", "year": "발행년", "pubyear": "발행년",
+        "publicationyear": "발행년", "dbname": "DB", "database": "DB",
+    }
+    for child in record:
+        tag = _local_tag(child.tag)
+        if tag in {"header", "total", "item", "record", "row"}:
+            continue
+        if len(child) == 0:
+            value = (child.text or "").strip()
+            if value:
+                row[aliases.get(tag, tag)] = value
+    return row
+
+
 def parse_search_xml(xml_data: bytes) -> tuple[int, list[dict]]:
-    """API의 <record><item><name>..<value>.. 형식을 DataFrame용 행으로 변환."""
+    """국회도서관 XML의 네임스페이스/태그 변형을 고려하여 목록 파싱.
+
+    문서에 명시된 <record><item><name/><value/></item></record>를 우선 처리.
+    제공기관에서 자료 목록 자체를 반환하지 않으면 빈 목록을 반환하며
+    상위 UI가 XML 구조 진단을 보여주도록 함. 임의의 논문을 생성하지 않음.
+    """
     if len(xml_data) > 5_000_000:
         raise PaperAPIError("API 응답이 너무 큽니다.")
     if b"<!DOCTYPE" in xml_data.upper() or b"<!ENTITY" in xml_data.upper():
@@ -43,30 +150,38 @@ def parse_search_xml(xml_data: bytes) -> tuple[int, list[dict]]:
     except ET.ParseError as exc:
         raise PaperAPIError("API 응답을 XML로 해석할 수 없습니다.") from exc
 
-    gateway_code = root.findtext(".//returnReasonCode")
+    gateway_code = _first_descendant_text(root, "returnReasonCode")
     if gateway_code:
-        detail = root.findtext(".//returnAuthMsg") or root.findtext(".//errMsg") or ""
+        detail = (_first_descendant_text(root, "returnAuthMsg")
+                  or _first_descendant_text(root, "errMsg"))
         raise PaperAPIError(f"공공데이터포털 오류 {gateway_code}: {detail}")
 
-    result_code = (root.findtext(".//resultCode") or "").strip()
+    result_code = _first_descendant_text(root, "resultCode")
     if result_code != "00":
-        detail = (root.findtext(".//resultMsg") or "알 수 없는 결과").strip()
+        detail = _first_descendant_text(root, "resultMsg") or "알 수 없는 결과"
         raise PaperAPIError(f"국회도서관 응답 오류 {result_code or '?'}: {detail}")
 
     try:
-        total = int(root.findtext(".//total") or "0")
+        total = int(_first_descendant_text(root, "total") or "0")
     except ValueError as exc:
         raise PaperAPIError("전체 검색 건수(total)를 해석할 수 없습니다.") from exc
 
+    # 1. 문서의 record, 혹은 일부 서비스 변형의 row 태그.
+    record_nodes = [node for node in root.iter()
+                    if _local_tag(node.tag) in {"record", "row"}]
+    # 2. record 태그가 생략되었으나 여러 <item><name>.. 필드가 담긴 컨테이너.
+    if not record_nodes:
+        for node in root.iter():
+            fields = [c for c in node if _local_tag(c.tag) == "item"
+                      and _direct_child_text(c, "name")]
+            if len(fields) >= 2:
+                record_nodes.append(node)
+
     rows = []
-    for record in root.findall(".//record"):
-        row = {}
-        for item in record.findall("./item"):
-            name = (item.findtext("name") or "").strip()
-            value = (item.findtext("value") or "").strip()
-            if name:
-                row[name] = "; ".join(filter(None, [row.get(name), value]))
-        if row:
+    for record in record_nodes:
+        row = _parse_record(record)
+        # 빈 레코드 및 탐색 중 발견한 컨테이너의 잘못된 변환을 배제.
+        if row and any(key not in {"name", "value"} for key in row):
             rows.append(row)
     return total, rows
 
@@ -93,7 +208,8 @@ def search_candidates(keyword: str, automatic_retry: bool = True) -> list[str]:
 
 
 def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10,
-                  session=None, search_field: str = "전체") -> tuple[int, pd.DataFrame]:
+                  session=None, search_field: str = "전체",
+                  diagnostics: list[dict] | None = None) -> tuple[int, pd.DataFrame]:
     """공식 basic 검색. 문서 규정: serviceKey/pageno/displaylines/search 필수."""
     key = normalize_key(api_key)
     keyword = (keyword or "").strip()
@@ -114,8 +230,23 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
         try:
             response = client.get(API_BASE_URL, params=params, timeout=(6, 25))
             # HTTP 400 시에도 XML 오류코드를 우선 보여주기 위해 상태검사 이전에 파싱
+            # 검색 요청 및 응답 본문 대신 태그명·건수만 진단 자료에 남김.
+            xml_shape = describe_xml_structure(response.content)
             total, rows = parse_search_xml(response.content)
             response.raise_for_status()
+            if diagnostics is not None:
+                diagnostics.append({
+                    "페이지": page,
+                    "HTTP": response.status_code,
+                    "API 전체 건수": total,
+                    "변환된 자료 수": len(rows),
+                    "XML 루트": xml_shape["root"],
+                    "record 태그 수": xml_shape["record_nodes"],
+                    "row 태그 수": xml_shape["row_nodes"],
+                    "item 태그 수": xml_shape["item_nodes"],
+                    "XML 태그 빈도": xml_shape["tag_counts"],
+                    "XML 요소 경로": xml_shape["paths"],
+                })
         except requests.exceptions.RequestException as exc:
             raise PaperAPIError(
                 "국회도서관 API에 연결할 수 없습니다. URL, HTTPS, API 승인 상태를 확인하세요."

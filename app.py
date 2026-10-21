@@ -124,6 +124,7 @@ with st.sidebar:
             try:
                 candidates = search_candidates(keyword, automatic_retry)
                 attempts = []
+                xml_diagnostics = []
                 final_df = pd.DataFrame()
                 final_total = 0
                 used_keyword = candidates[0]
@@ -135,6 +136,7 @@ with st.sidebar:
                         total, result_df = search_papers(
                             admin_key, candidate, pages=pages,
                             per_page=per_page, search_field=search_field,
+                            diagnostics=xml_diagnostics,
                         )
                         attempts.append((candidate, total, len(result_df)))
                         final_total, final_df, used_keyword = total, result_df, candidate
@@ -142,6 +144,7 @@ with st.sidebar:
                             break
                 st.session_state.search_events = recent + [now] * len(attempts)
                 st.session_state.search_attempts = attempts
+                st.session_state.xml_diagnostics = xml_diagnostics
                 st.session_state.paper_df = final_df
                 st.session_state.search_keyword = keyword.strip()
                 st.session_state.search_used_keyword = used_keyword
@@ -165,8 +168,9 @@ with st.sidebar:
                 elif final_total > 0:
                     st.session_state.search_notice = (
                         "error",
-                        f"API에서는 전체 {final_total:,}건이라고 응답했으나, 자료 목록(record)이 "
-                        "파싱되지 않았습니다. 제공기관의 XML 응답 구조 확인이 필요합니다.",
+                        f"API 연결과 인증은 정상이며 전체 {final_total:,}건이 검색되었습니다. "
+                        "다만 논문 목록을 읽지 못했습니다. 아래 'API 검색 진단'에서 "
+                        "XML 태그 구조를 확인해 주세요. 인증키 문제는 아닙니다.",
                     )
                 else:
                     checked = ", ".join(f"'{term}'" for term, _, _ in attempts)
@@ -262,15 +266,24 @@ with search_tab:
         st.info("왼쪽에서 검색어를 입력하고 '논문 검색 실행' 버튼을 눌러 주세요.")
 
     if st.session_state.get("search_attempts"):
-        with st.expander("🔧 API 검색 진단 (검색어·건수만 표시, 인증키 제외)"):
+        with st.expander("🔧 API 검색 진단 (검색어·건수·XML 태그만 표시, 인증키 제외)"):
             attempts_df = pd.DataFrame(
                 st.session_state.search_attempts,
                 columns=["요청 검색어", "API 전체 건수", "수집된 자료 수"],
             )
             st.dataframe(attempts_df, hide_index=True, use_container_width=True)
+            xml_diag = st.session_state.get("xml_diagnostics", [])
+            if xml_diag:
+                st.markdown("**API XML 응답 구조 (인증키·논문 내용 제외)**")
+                st.dataframe(pd.DataFrame(xml_diag), hide_index=True, use_container_width=True)
+                if st.session_state.get("total_count", 0) > 0 and attempts_df["수집된 자료 수"].sum() == 0:
+                    st.warning(
+                        "검색 건수는 있으나 목록이 누락되었습니다. 위 'XML 태그 빈도'와 "
+                        "'XML 요소 경로'를 확인해 주시면 실제 응답 구조에 맞춰 수정할 수 있습니다."
+                    )
             st.caption(
                 f"검색 대상: {st.session_state.get('search_field', '전체')} · "
-                "실제 결과가 0건이면 다른 검색어 또는 검색 대상을 사용하세요."
+                "실제 검색 건수가 0인 경우에만 검색어를 바꿔 보세요."
             )
 
 with ai_tab:
