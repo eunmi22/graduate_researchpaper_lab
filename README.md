@@ -256,3 +256,71 @@ Official references:
 - Yonsei University: https://dcollection.yonsei.ac.kr/srch/srchSearch
 - Sungkyunkwan University: https://dcollection.skku.ac.kr
 - Pusan National University: https://dcollection.pusan.ac.kr (official PNU thesis submission notice)
+
+
+## v1.8 기록 (v1.9에서 교체)
+
+세종사이버대학교 논문검색 안내 페이지 연결은 기존 임시 설정입니다. v1.9에서는 학교 dCollection의 실제 주소 `https://sjcu.dcollection.net`으로 교체했습니다. 아래의 v1.9 안내가 최신입니다.
+
+
+## v1.9 - 실사용 키워드 검색과 학회·협회·연구보고서 찾기 (2026-10-21)
+
+### 화면 변경
+
+- **왼쪽 `🏛 대학별 논문·원문 찾기`**: 대학 선택 + 논문 제목/키워드 입력 후 **`🔎 입력 키워드로 검색 결과 열기 ↗`**를 클릭하면 `site:학교dCollection도메인 "키워드"`를 포함한 **Google 외부 검색 결과**가 열립니다.
+- 같은 메뉴의 `🏫 학교 dCollection 자료검색 화면 열기 ↗`는 학교 **자체 검색 페이지**만 열며 **키워드를 전달하지 않습니다**. 두 버튼을 혼동하지 않게 명확히 분리했습니다.
+- **세종사이버대학교**: 실제 저장소 `https://sjcu.dcollection.net` / 자체 자료검색 화면 `https://sjcu.dcollection.net/srch/srchSearch`로 수정했습니다.
+- **왼쪽 `📑 학회·협회·연구보고서 검색`**: 기관/서비스와 키워드를 선택하고 **외부 검색 결과 열기**를 누릅니다.
+- **오른쪽 `📑 학회·보고서 검색` 탭**: 선택한 출처 검색 결과 링크, 공식 사이트 링크 및 다른 기관의 검색 결과 링크 표를 제공합니다.
+
+### 검색 지원 기관(기본 제공)
+
+| 출처 | 취급하는 자료 예시 | 검색 방식 |
+|---|---|---|
+| KCI 한국학술지인용색인 | 학회·학술논문 | Google `site:kci.go.kr` |
+| 한국정보보호학회 | 정보보호·포렌식 학술논문 | Google `site:kiisc.or.kr` |
+| 한국중견기업연합회 | 협회 정책자료·간행물 | Google `site:fomek.or.kr` |
+| KISA 한국인터넷진흥원 | 정보보안 보고서 | Google `site:kisa.or.kr` |
+| NIA 한국지능정보사회진흥원 | AI·ICT 정책연구보고서 | Google `site:nia.or.kr` |
+| KISTI ScienceON | 논문·국가 R&D 보고서 | Google `site:scienceon.kisti.re.kr` |
+| 국회입법조사처 | 입법·정책보고서 | Google `site:nars.go.kr` |
+| Google Scholar | 학술자료 통합검색 | Scholar 공식 검색 URL |
+
+### 기술적 범위와 주의사항
+
+- **진짜 외부 웹 검색**: 링크 주소에 키워드와 대상 기관 도메인을 포함하므로, 버튼을 누르면 검색엔진에서 검색이 실행됩니다. 원래 버전처럼 입력만 되고 검색이 실행되지 않는 오해를 바로잡았습니다.
+- **앱 내부 API 검색과 다름**: 국회도서관만 승인된 자료검색 API로 Streamlit 내부에 목록을 수집합니다. 대학 저장소/학회·협회 사이트는 검색엔진 결과를 **외부 브라우저 탭**에서 확인합니다. 검색 결과를 pandas에 자동 수집하거나 다운로드하지 않습니다.
+- **Google 색인·사이트 운영 제한**: 사이트에 실제 문서가 있어도 구글 색인이 안 되어 검색되지 않을 수 있습니다. 이 경우 해당 기관의 공식 페이지에서 직접 검색하세요. 원문 PDF 공개·무료 제공은 보장되지 않습니다.
+- **비밀키 불필요**: 외부 검색 링크에는 DATA_GO_KR_API_KEY 및 개인 OpenAI API 키가 포함되지 않습니다.
+
+### 배포 방법
+
+기존 v1.8 사용자는 `app.py`와 `dcollection_fallback.py`를 교체하고, `external_research.py` **파일을 새로 추가**하세요. 다른 기존 파일은 그대로 유지됩니다. 전체 ZIP으로 배포하는 경우 프로젝트 구조를 유지한 채 GitHub에 업로드하세요.
+
+```bat
+cd /d "C:\Users\ASUS\Python\graduate_paper_lab"
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+### 검증
+
+```bat
+python -m pip install pytest
+python -m pytest -q
+```
+
+오프라인 단위 테스트는 네트워크와 실제 인증키를 사용하지 않습니다. 실제 검색엔진 결과 개수, 학교 사이트 UI 및 Streamlit Community Cloud 배포 동작은 배포 후 사용자가 확인해야 합니다.
+
+### 참고 사이트
+
+- 세종사이버대학교 dCollection: https://sjcu.dcollection.net
+- 세종사이버대학교 자료검색: https://sjcu.dcollection.net/srch/srchSearch
+- dCollection 참여기관: https://www.dcollection.net/common/instList.do
+- KCI: https://www.kci.go.kr/kciportal/po/search/poArtiSear.kci
+- 한국정보보호학회: https://kiisc.or.kr
+- 한국중견기업연합회: https://fomek.or.kr
+- KISA: https://www.kisa.or.kr
+- NIA: https://www.nia.or.kr
+- ScienceON: https://scienceon.kisti.re.kr
+- 국회입법조사처: https://www.nars.go.kr

@@ -28,6 +28,9 @@ from dcollection_fallback import (
     ALL_UNIVERSITIES, make_dcollection_destinations, no_results_from_nanet,
     universities,
 )
+from external_research import (
+    research_source_names, research_search_destination, research_search_table,
+)
 from reporting import create_excel, create_pdf_report
 from riss_catalog import (
     RISS_NAME, RISS_SOURCE_URL, RissCatalogError,
@@ -108,7 +111,7 @@ def current_paper() -> tuple[dict | None, str]:
 
 st.title("🎓 대학원 AI 논문 연구 도우미")
 st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
-st.caption("\ubc84\uc804 1.7 \u00b7 \uad6d\ud68c\ub3c4\uc11c\uad00 \uac80\uc0c9 0\uac74 \uc2dc \ub300\ud559\ubcc4 dCollection \uc6d0\ubb38 \uac80\uc0c9\uc73c\ub85c \uc774\ub3d9")
+st.caption("버전 1.9 · 실제 외부 키워드 검색 · 세종사이버대학교 dCollection · 학회·협회·연구보고서 검색")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -243,20 +246,57 @@ with st.sidebar:
     else:
         st.session_state.filtered_df = pd.DataFrame()
 
-    # University settings stay in the left sidebar; external links appear at right.
+    # The typed query is used in an actual external search URL; do not claim
+    # that merely typing into the field runs the institution's own search.
     st.divider()
-    with st.expander("\U0001f3db \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30", expanded=False):
-        st.selectbox(
-            "\uc6d0\ubb38\uc744 \ucc3e\uc744 \ub300\ud559", universities(), key="dcollection_university",
-            help="\ub300\ud559\ubcc4 dCollection \ub610\ub294 \ud559\uad50 \uacf5\uc2dd \ub17c\ubb38\uac80\uc0c9 \uc548\ub0b4\ub85c \uc774\ub3d9\ud569\ub2c8\ub2e4.",
+    with st.expander("🏛 대학별 논문·원문 찾기", expanded=False):
+        dc_university_sidebar = st.selectbox(
+            "원문을 찾을 대학", universities(), key="dcollection_university",
+            help="대학별 공식 dCollection 사이트를 선택합니다.",
         )
-        st.text_input(
-            "\ud559\uad50 \uc0ac\uc774\ud2b8\uc5d0\uc11c \ucc3e\uc744 \ub17c\ubb38 \uc81c\ubaa9\u00b7\ud0a4\uc6cc\ub4dc",
+        dc_query_sidebar = st.text_input(
+            "외부 웹검색에 사용할 제목·키워드",
             value=st.session_state.get("search_keyword", ""),
             key="dcollection_query",
-            help="\uac80\uc0c9\uc5b4\ub97c \uc9e7\uac8c \uc870\uc815\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. \uc678\ubd80 \uc0ac\uc774\ud2b8\uc5d0\uc11c \uc7ac\uac80\uc0c9\ud569\ub2c8\ub2e4.",
+            placeholder="예: 내부통제",
+            help="입력 후 아래 '키워드 검색 결과 열기'를 누르면 Google에서 선택 대학의 dCollection만 실제 검색합니다.",
         )
-        st.caption("\ubcf8 \uae30\ub2a5\uc740 \ub17c\ubb38 \uc6d0\ubb38\uc744 \uc790\ub3d9 \uc218\uc9d1\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.")
+        dc_side_links = make_dcollection_destinations(dc_university_sidebar, dc_query_sidebar)
+        st.link_button(
+            "🔎 입력 키워드로 검색 결과 열기 ↗",
+            dc_side_links["web_search_url"],
+            disabled=not bool(dc_side_links["keyword"]), use_container_width=True,
+        )
+        st.link_button(
+            "🏫 학교 dCollection 자료검색 화면 열기 ↗",
+            dc_side_links["repository_search_url"], use_container_width=True,
+        )
+        st.caption(
+            "검색 버튼은 Google의 실제 검색 결과를 새 탭에서 엽니다. "
+            "학교 자체 검색창으로 이동하는 버튼은 키워드를 자동 입력하지 않습니다. "
+            "여기서 논문 목록/PDF를 수집하지는 않습니다."
+        )
+
+    st.divider()
+    with st.expander("📑 학회·협회·연구보고서 검색", expanded=False):
+        src_name = st.selectbox(
+            "검색 대상 기관/학술정보 서비스", research_source_names(),
+            key="external_research_source",
+        )
+        src_keyword = st.text_input(
+            "외부 검색에 사용할 주제·키워드", key="external_research_query",
+            value="내부통제", placeholder="예: 내부통제, 포렌식",
+        )
+        src_links = research_search_destination(src_name, src_keyword)
+        st.link_button(
+            "🔎 이 키워드로 자료 검색 결과 열기 ↗",
+            src_links["search_url"],
+            disabled=not bool(src_links["keyword"]), use_container_width=True,
+        )
+        st.caption(
+            "외부 검색 사이트(Google/Scholar)에서 실제 키워드 검색을 실행합니다. "
+            "검색결과를 이 앱으로 자동 가져오거나, 원문 제공을 보장하지 않습니다."
+        )
 
     st.divider()
     with st.expander("📚 RISS 서지 구축 통계", expanded=False):
@@ -321,8 +361,9 @@ with st.sidebar:
     st.caption("공개 링크 서비스 · 로그인 없음 · 브라우저별 세션")
 
 # 오른쪽 메인 영역: 검색/AI요약/통계/다운로드 결과만 배치합니다.
-search_tab, ai_tab, trends_tab, riss_tab, submit_tab, help_tab = st.tabs(
-    ["📚 검색 결과", "🤖 논문 AI 요약", "📊 연구 동향", "📖 RISS 서지통계", "📄 과제 보고서", "ℹ️ 이용 안내"]
+search_tab, ai_tab, trends_tab, riss_tab, sources_tab, submit_tab, help_tab = st.tabs(
+    ["📚 검색 결과", "🤖 논문 AI 요약", "📊 연구 동향", "📖 RISS 서지통계",
+     "📑 학회·보고서 검색", "📄 과제 보고서", "ℹ️ 이용 안내"]
 )
 
 with search_tab:
@@ -458,26 +499,30 @@ with search_tab:
         a, b = st.columns(2)
         with a:
             st.link_button(
-                links["button_label"], links["repository_url"],
-                use_container_width=True,
+                "🔎 입력 키워드로 외부 검색 결과 열기 ↗",
+                links["web_search_url"], use_container_width=True,
+                disabled=not bool(links["keyword"]),
             )
         with b:
             st.link_button(
-                "\U0001f50e \ud574\ub2f9 \ub300\ud559 \uc6f9 \uac80\uc0c9", links["web_search_url"],
-                use_container_width=True, disabled=not bool(links["keyword"]),
+                "🏫 dCollection 자료검색 페이지 열기 ↗",
+                links["repository_search_url"], use_container_width=True,
             )
         st.link_button(
-            "\U0001f3eb \uc804\uad6d dCollection \ucc38\uc5ec\ub300\ud559 \ubaa9\ub85d \ubcf4\uae30",
+            "🏫 전국 dCollection 참여대학 목록 보기",
             links["directory_url"], use_container_width=True,
         )
-        if links["source_note"]:
-            st.info(links["source_note"])
+        st.caption(f"실제 외부 검색 조건: {links['search_query']}")
+        st.info(
+            "첫 버튼은 입력 키워드를 이용하여 Google에서 선택 대학 사이트만 검색합니다. "
+            "둘째 버튼은 학교 dCollection 검색 화면만 열며, 키워드가 자동 입력되지 않습니다. "
+            "Google에 색인되지 않은 논문은 이 방식으로 발견되지 않을 수 있습니다."
+        )
         if dc_university == ALL_UNIVERSITIES:
-            st.info("\ub300\ud559\uba85\uc744 \ucc38\uc5ec\ub300\ud559 \ubaa9\ub85d\uc5d0\uc11c \ucc3e\uc740 \ub4a4 \ud574\ub2f9 \ub300\ud559\uc758 \uc800\uc7a5\uc18c\ub85c \uc774\ub3d9\ud558\uc138\uc694.")
+            st.info("학교를 지정하고 싶다면 참여기관 목록에서 정확한 대학 dCollection을 찾아보세요.")
         st.caption(
-            "\ub300\ud559\ubcc4 \ub9c1\ud06c\ub294 dCollection \uc800\uc7a5\uc18c \ub610\ub294 \uacf5\uc2dd \ub17c\ubb38\uac80\uc0c9 \uc548\ub0b4 \ud398\uc774\uc9c0\uc785\ub2c8\ub2e4. "
-            "\uc6f9 \uac80\uc0c9\uc740 Google \uacb0\uacfc\ub85c \uc774\ub3d9\ud558\uba70, \uc7ac\uc0ac\uc6a9\uc744 \uc704\ud55c \uc870\ud68c\uc694\uccad/API\uac00 \uc544\ub2d9\ub2c8\ub2e4. "
-            "\ub17c\ubb38 \uc6d0\ubb38\uc740 \uacf5\uac1c\u00b7\uc800\uc791\uad8c \uc870\uac74\uc5d0 \ub530\ub77c \uc5f4\ub78c\uc774 \uc81c\ud55c\ub420 \uc218 \uc788\uc2b5\ub2c8\ub2e4."
+            "외부 웹검색 결과를 앱 안으로 자동 수집하지 않습니다. "
+            "원문 공개 여부는 개별 대학 저장소에서 확인하고, 확보한 PDF는 AI 요약 탭에 직접 업로드해 주세요."
         )
 
 with ai_tab:
@@ -673,8 +718,55 @@ with riss_tab:
             )
         st.caption("RISS 통계는 논문 검색·AI 요약·참고문헌 생성에 섞이지 않습니다.")
 
+with sources_tab:
+    st.subheader("5. 학회·협회 논문 및 연구보고서 찾기")
+    st.caption("KCI · 학회 · 협회 · 공공기관 · ScienceON의 공식 페이지와 실제 외부 키워드 검색 결과로 연결합니다.")
+    st.info(
+        "검색 방식: 입력한 키워드로 Google의 기관별 site: 검색 또는 Google Scholar 검색을 엽니다. "
+        "별도의 유료/기관 API 없이 사용하지만, 외부 사이트의 검색결과는 이 앱에서 자동 수집하지 않습니다."
+    )
+    source = st.session_state.get("external_research_source", research_source_names()[0])
+    phrase = st.session_state.get("external_research_query", "").strip()
+    dest = research_search_destination(source, phrase)
+    st.write(f"선택 기관: **{source}**")
+    st.write(f"입력 검색어: **{phrase or '(미입력)'}**")
+    st.caption(f"검색 방식: {dest['search_engine']}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.link_button(
+            "🔎 이 키워드로 검색 결과 열기 ↗", dest["search_url"],
+            use_container_width=True, disabled=not bool(phrase),
+        )
+    with c2:
+        st.link_button(
+            "🏛 기관 공식 사이트 열기 ↗", dest["homepage_url"],
+            use_container_width=True,
+        )
+    if not phrase:
+        st.warning("왼쪽 '학회·협회·연구보고서 검색' 메뉴에서 키워드를 입력해 주세요.")
+    else:
+        st.markdown("**다른 기관에서도 같은 키워드 검색하기**")
+        st.dataframe(
+            pd.DataFrame(research_search_table(phrase)),
+            hide_index=True, use_container_width=True,
+            column_config={
+                "기관/검색처": st.column_config.TextColumn("기관/검색처", width="medium"),
+                "자료 유형": st.column_config.TextColumn("자료 유형", width="medium"),
+                "키워드 검색 결과": st.column_config.LinkColumn(
+                    "🔎 외부 검색 결과", display_text="검색 결과 열기 ↗", width="medium"
+                ),
+                "공식 홈페이지": st.column_config.LinkColumn(
+                    "🏛 공식 사이트", display_text="공식 사이트 열기 ↗", width="medium"
+                ),
+            },
+        )
+    st.caption(
+        "Google에서 일부 기관 자료가 누락되거나 링크가 변경될 수 있습니다. "
+        "학회·연구보고서의 서지정보·발행기관·저작권·원문 접근 조건을 원문 사이트에서 확인해 주세요."
+    )
+
 with submit_tab:
-    st.subheader("5. 과제 보고서 다운로드")
+    st.subheader("6. 과제 보고서 다운로드")
     st.caption("과제 표지의 학교·교과목·제출자 정보는 왼쪽 '과제 표지 정보'를 펼쳐 입력하세요.")
     preview = pd.DataFrame([
         {"항목": "학교 / 전공", "입력 내용": " / ".join(filter(None, [school, department])) or "미입력"},
@@ -743,6 +835,7 @@ with submit_tab:
         st.info("PDF 보고서를 만들려면 '논문 AI 요약' 탭에서 선택한 논문의 6개 항목 요약을 생성하세요.")
 
 with help_tab:
+    st.info("대학 dCollection 및 학회·협회·보고서 검색은 입력 키워드로 외부 검색 결과를 여는 기능입니다. 국회도서관 API의 앱 내부 검색과 구분됩니다.")
     st.subheader("이용 및 과제 제출 안내")
     st.markdown("""
 **화면 구성**
