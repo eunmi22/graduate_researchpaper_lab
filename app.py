@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from paperlab import (
     API_NAME, SOURCE_URL, PaperAPIError, calculate_trends, extract_pdf_text,
-    add_access_links, clean_paper_title, make_reference, nanet_detail_url,
+    add_access_links, clean_paper_title, nanet_detail_url,
     scholar_search_url, prepare_evidence, search_candidates, search_papers, select_type,
     summarize_paper, summary_lines,
 )
@@ -32,6 +32,7 @@ from external_research import (
     research_source_names, research_search_destination, research_search_table,
 )
 from reporting import create_excel, create_pdf_report
+from ui_helpers import ai_summary_blockers
 from citation_styles import (
     JOURNAL, THESIS, REPORT, UNKNOWN, REFERENCE_TYPES, REFERENCE_TEMPLATES,
     THESIS_EXAMPLE, suggested_citation, complete_citation, format_reference,
@@ -184,7 +185,7 @@ def edit_citation(paper: dict) -> dict[str, str]:
 
 st.title("🎓 대학원 AI 논문 연구 도우미")
 st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
-st.caption("버전 2.0 · 자료유형별 참고문헌 표기 · 외부자료 검색 · dCollection · RISS 서지통계")
+st.caption("버전 2.1 · 쉬운 AI 요약 화면 · 자료유형별 참고문헌 · dCollection · RISS 서지통계")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -417,7 +418,10 @@ with st.sidebar:
         placeholder="sk-...",
     )
     model = st.selectbox("AI 요약 모델", ["gpt-4.1-mini", "gpt-4o-mini"])
-    st.caption("논문 검색·통계는 OpenAI 키 없이도 이용할 수 있습니다.")
+    if user_ai_key.strip():
+        st.success("OpenAI API 키 입력 완료 (실제 사용 가능 여부는 요약 시 확인)")
+    else:
+        st.info("AI 요약을 사용하려면 위에 **본인의 OpenAI API 키**를 입력하세요. 논문 검색·통계는 키 없이 가능합니다.")
 
     st.divider()
     with st.expander("📝 과제 표지 정보", expanded=False):
@@ -642,30 +646,54 @@ with ai_tab:
             if scholar_url:
                 st.link_button("🔎 Google Scholar에서 공개본 검색", scholar_url, use_container_width=True)
         st.caption("상세정보에서 '원문보기' 제공 여부를 확인하세요. 이용 제한 자료는 로그인/기관 방문이 필요할 수 있습니다.")
-        with st.expander("API 서지정보 임시 참고문헌 (정식 인용은 과제 보고서 탭에서 수정)"):
-            st.write(make_reference(paper))
-            st.caption("원본 서지정보에 없는 DOI/쪽수/학술지 정보는 생성하지 않습니다.")
-
-    abstract = st.text_area("초록 또는 본문 발췌 붙여넣기", height=155,
-                            placeholder="원문에서 확인된 초록을 붙여넣어 주세요. 논문 제목만으로는 분석하지 않습니다.")
-    uploaded = st.file_uploader("논문 PDF 파일 업로드 (선택, 최대 15MB)", type=["pdf"])
+    # 서지정보 임시 참고문헌은 요약과 직접 관련 없으므로 보고서 탭에서만 확인합니다.
+    st.markdown("#### ① 논문 PDF 업로드")
+    st.caption("PDF를 올리면 내용을 자동 추출합니다. 초록을 다시 복사해 붙여넣을 필요는 없습니다.")
+    uploaded = st.file_uploader("논문 PDF 파일 업로드 (최대 15MB)", type=["pdf"])
     pdf_text = ""
     pdf_count = None
     if uploaded is not None:
         try:
             pdf_text, pdf_count = extract_pdf_text(uploaded.getvalue())
             if len(pdf_text.strip()) < 80:
-                st.warning("PDF에서 읽을 수 있는 텍스트가 부족합니다. 스캔 PDF는 OCR을 지원하지 않으므로 초록을 직접 입력하세요.")
+                st.warning("PDF에서 읽을 수 있는 글자가 부족합니다. 스캔 PDF는 OCR을 지원하지 않으므로 아래에서 초록을 직접 입력하세요.")
             else:
                 st.success(f"PDF {pdf_count}페이지 중 최대 30페이지에서 텍스트 추출 완료 ({len(pdf_text):,}자)")
         except ValueError as exc:
             st.error(str(exc))
 
-    evidence = prepare_evidence(abstract=abstract, pdf_text=pdf_text)
+    # 텍스트 입력은 PDF가 없거나 스캔 PDF일 때의 보조 수단으로 접어 둡니다.
+    usable_pdf_text = pdf_text if len(pdf_text.strip()) >= 80 else ""
+    with st.expander("✍️ PDF가 없거나 글자를 읽지 못할 때: 초록 직접 입력 (선택)",
+                     expanded=bool(uploaded is not None and not usable_pdf_text)):
+        abstract = st.text_area(
+            "초록 또는 본문 발췌 붙여넣기 (선택)", height=155,
+            placeholder="PDF를 확보하지 못했을 때 원문에서 확인한 초록을 붙여넣으세요.",
+            help="PDF 텍스트 추출에 성공했다면 이 입력란은 비워 두셔도 됩니다.",
+        )
+        st.caption("PDF의 텍스트가 확보되어 있다면 이 입력란은 비워 두어도 AI 요약이 가능합니다.")
+
+    evidence = prepare_evidence(abstract=abstract, pdf_text=usable_pdf_text)
     evidence_id = hashlib.sha256(evidence.encode("utf-8")).hexdigest() if evidence else ""
     paper_id = "" if paper is None else str(paper.get("controlno") or paper.get("자료명/저자사항"))
-    confirmed = st.checkbox("선택한 논문과 입력한 초록/PDF가 같은 논문임을 확인했습니다.")
-    enabled = bool(paper and confirmed and len(evidence.strip()) >= 40 and user_ai_key.strip())
+    st.markdown("#### ② 논문 확인 후 AI 요약")
+    confirmed = st.checkbox("선택한 논문과 업로드 PDF/초록이 같은 논문임을 확인했습니다.")
+    blockers = ai_summary_blockers(paper, confirmed, evidence, user_ai_key)
+    enabled = not blockers
+    if blockers:
+        first = blockers[0]
+        if first == "API_KEY":
+            st.warning("🔑 **OpenAI API 키를 입력해야 AI 요약 버튼이 활성화됩니다.** "
+                       "왼쪽 사이드바의 **'🤖 개인 AI 설정 → 본인의 OpenAI API 키'**에 입력해 주세요. "
+                       "국회도서관 검색용 공공데이터 API 키와는 별개입니다.")
+        elif first == "PAPER":
+            st.info("분석할 논문을 위에서 선택하거나 직접 업로드해 주세요.")
+        elif first == "EVIDENCE":
+            st.info("분석할 내용이 없습니다. PDF를 업로드하거나 접힌 **'초록 직접 입력'**을 펼쳐 주세요.")
+        elif first == "CONFIRM":
+            st.info("선택 논문과 PDF/초록이 일치하는지 확인한 뒤 체크해 주세요.")
+    else:
+        st.success("AI 요약 준비 완료! 아래 버튼을 누르세요.")
     if st.button("✨ 6개 항목 AI 요약 생성", type="primary", disabled=not enabled):
         try:
             with st.spinner("제공한 초록·PDF의 내용만을 바탕으로 요약하고 있습니다..."):
@@ -866,7 +894,7 @@ with submit_tab:
     ))
     summary_to_export = st.session_state.get("summary_result") if context_ok else None
 
-    with st.expander("📚 자료 종류별 참고문헌 표기 기준", expanded=True):
+    with st.expander("📚 자료 종류별 참고문헌 표기 기준 (필요할 때만 열기)", expanded=False):
         st.caption("이번 과제에 지정한 형식입니다. 제출 기관의 별도 인용 규정이 있으면 그 규정을 우선하세요.")
         for kind, template in REFERENCE_TEMPLATES.items():
             st.markdown(f"**{kind}**")
@@ -875,7 +903,9 @@ with submit_tab:
 
     report_citation = None
     if selected:
-        report_citation = edit_citation(selected)
+        st.caption("참고문헌은 선택한 논문 서지정보를 토대로 보고서에 포함됩니다. 제출 전에 원문과 대조하여 수정하세요.")
+        with st.expander("📝 참고문헌 확인·수정 (과제 제출 전)", expanded=False):
+            report_citation = edit_citation(selected)
     else:
         st.info("참고문헌을 작성하려면 먼저 검색 목록에서 논문을 선택하거나 직접 업로드하세요.")
 
@@ -932,7 +962,7 @@ with help_tab:
 **기능 구성**
 - 국회도서관 API 논문 검색: 별도 비용 없는 공공데이터 API, 관리자 키 사용
 - 자료 통계: 검색 결과 내 발행연도와 유형의 빈도 분석
-- AI 요약: 사용자가 붙여넣은 초록 또는 직접 업로드한 PDF 텍스트를 근거로 6개 항목 요약
+- AI 요약: PDF를 우선 업로드하고 텍스트를 자동 추출하여 6개 항목 요약. PDF가 없거나 스캔본일 때만 접이식 초록 입력 사용
 - RISS 종합목록: 기관코드·조사년도별 국내/국외 서지 구축 현황 및 Excel 다운로드 (논문 검색 기능 아님)
 - 과제 제출: 학교·전공·이름·과목 표지, PDF 보고서, Excel 통계 및 자료유형별 참고문헌 표기
 
@@ -941,7 +971,7 @@ with help_tab:
 - 업로드한 PDF 텍스트는 OpenAI API에 전달됩니다. 저작권·개인정보·연구윤리 및 과목별 AI 활용 기준을 확인하세요.
 - 스캔본 PDF는 OCR 기능이 없어 초록을 복사하여 넣어야 합니다. PDF 전체가 아니라 최대 30페이지의 일부 발췌 텍스트만 AI에 전달합니다.
 - API는 서지 목록 중심이며 논문 초록·본문을 자동으로 제공한다고 보장할 수 없습니다.
-- 참고문헌은 학술지 논문·학위논문·기관 연구보고서의 과제용 형식 중 선택합니다. 원문에 없는 서지정보는 '미확인'으로 표시하므로 제출 전에 반드시 검증하고 수정해야 합니다.
+- 참고문헌 편집과 자료별 표기 기준은 '과제 보고서' 탭에서 펼쳐 확인할 수 있습니다. 학술지 논문·학위논문·기관 연구보고서의 과제용 형식 중 선택합니다. 원문에 없는 서지정보는 '미확인'으로 표시하므로 제출 전에 반드시 검증하고 수정해야 합니다.
 - 공개 접속 주소를 아는 누구나 이용할 수 있습니다. 회원별 사용기록·개인 계정 기능은 구현하지 않았습니다.
 """)
     st.markdown(f"**데이터 출처:** [{API_NAME}]({SOURCE_URL}) · [{RISS_NAME}]({RISS_SOURCE_URL})")
