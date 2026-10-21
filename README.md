@@ -237,3 +237,22 @@ GitHub에서 배포한 앱의 코드를 변경한 경우 연결된 Streamlit Com
 ### 검증
 
 `python -m pytest tests -q` (오프라인 단위 테스트). 실제 국회도서관 원문 열람 권한은 이용자의 계정/저작권 상태에 따라 달라지므로 자동 검증되지 않습니다.
+
+## v1.7: University dCollection fallback for theses not found in NAL search
+
+- National Assembly Library graduate theses: mandatory deposit under National Assembly Library Act article 7(4), generally within 30 days from publication. The library states universities bulk-submit degree theses. An API result of zero is **not** evidence that a thesis was never deposited or is not held.
+- When the public API returns **zero total hits**, the search-results tab expands a university dCollection alternative search panel. If an API parser returns zero rows but total > 0, the fallback does **not** incorrectly assert that the thesis is absent.
+- The left sidebar provides a university choice and a title/keyword for fallback. Users can select Korea University, Seoul National University, Yonsei University, Sungkyunkwan University, Pusan National University, or the full official list of dCollection institutions.
+- The university button opens a verified institutional dCollection page. The Google button performs a **site-limited web search** (not the institution's search API). Users must confirm the thesis and whether full text is accessible. Other institutions are available through the official institution directory. No PDF scraping or automatic downloading.
+- No new API key is needed for external link buttons. Existing NAL API and RISS statistics API remain separate.
+
+Official references:
+- National Assembly Library Act article 7: https://www.law.go.kr/LSW/lsSideInfoP.do?docCls=jo&joBrNo=00&joNo=0007&lsiSeq=279757&urlMode=lsScJoRltInfoR
+- NAL deposit procedure: https://www.nanet.go.kr/usermadang/etc/clView.do
+- dCollection: https://www.dcollection.net/common/guideView.do?guideId=000000000001
+- Participating universities: https://www.dcollection.net/common/instList.do
+- Korea University: https://dc.korea.ac.kr/srch/srchSearch
+- Seoul National University: https://dcollection.snu.ac.kr (official SNU library announcements)
+- Yonsei University: https://dcollection.yonsei.ac.kr/srch/srchSearch
+- Sungkyunkwan University: https://dcollection.skku.ac.kr
+- Pusan National University: https://dcollection.pusan.ac.kr (official PNU thesis submission notice)

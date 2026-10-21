@@ -1,0 +1,8 @@
+v1.7 changes (university dCollection original/full-text fallback)
+1) NAL API total=0: automatically expand external dCollection search panel.
+2) Select one of five verified university repositories, or find others via official dCollection institution directory.
+3) Site-limited Google search button is external and does not download PDFs.
+4) This is not a second paper-search API; no additional API key required.
+5) NAL API reporting nonzero hits but parsing zero rows is NOT treated as thesis absence.
+6) Existing RISS, AI summarization, charts, Excel and PDF export remain unchanged.
+7) Update app.py and add dcollection_fallback.py; paperlab.py can remain unchanged from v1.6.
