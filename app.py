@@ -77,6 +77,7 @@ def current_paper() -> tuple[dict | None, str]:
 
 st.title("🎓 대학원 AI 논문 연구 도우미")
 st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
+st.caption("버전 1.4 · 자료유형이 없어도 검색 결과 표시")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -185,17 +186,27 @@ with st.sidebar:
                     "error", f"검색에 실패했습니다 ({type(exc).__name__}). 관리자에게 문의하세요."
                 )
 
-    # 검색과 무관하게 여러 탭이 같은 필터링 결과를 사용합니다.
+    # 선택지가 비어 있거나 사용자가 필터를 모두 해제해도 원래 검색 목록을 표시.
+    # 빈 목록과 필터 없는 전체 목록을 혼동하지 않도록 합니다.
     df = st.session_state.get("paper_df")
     if isinstance(df, pd.DataFrame) and not df.empty:
-        available_types = sorted(str(t) for t in df["DB"].unique() if str(t).strip())
+        available_types = sorted(
+            {str(t).strip() or "미분류" for t in df["DB"]},
+            key=lambda t: (t == "미분류", t),
+        )
         chosen_types = st.multiselect(
             "검색 자료유형 필터", available_types, default=available_types,
-            key="sidebar_types", help="책이 포함될 수 있으므로 학위논문/학술기사를 골라 보세요."
+            key="sidebar_types",
+            help="자료유형을 지정하지 않으면 전체 검색자료가 표시됩니다. "
+                 "국회도서관 응답에 자료유형이 없으면 미분류로 표시됩니다.",
         )
-        filtered = select_type(df, chosen_types) if chosen_types else df.iloc[0:0].copy()
+        filtered = select_type(df, chosen_types)
         st.session_state.filtered_df = filtered
         st.caption(f"선택된 자료: {len(filtered):,}건")
+        if not chosen_types:
+            st.caption("필터 선택이 없어 전체 자료를 보여줍니다.")
+        if "미분류" in available_types:
+            st.caption("※ '미분류'는 API에 자료유형 정보가 없는 자료입니다.")
     else:
         st.session_state.filtered_df = pd.DataFrame()
 
@@ -253,10 +264,18 @@ with search_tab:
             f"(검색 대상: {st.session_state.get('search_field', '전체')}) · "
             "전체 검색 결과 수와 수집 건수는 다릅니다. 통계는 실제 수집한 자료만 대상으로 합니다."
         )
+        title_count = int(df["자료명/저자사항"].astype(str).str.strip().ne("").sum())
+        if title_count == 0:
+            st.warning(
+                "검색 결과는 수집했지만 논문 제목(자료명/저자사항) 값이 비어 있습니다. "
+                "아래 'API 검색 진단'의 수집 필드명을 확인해 주세요."
+            )
+        else:
+            st.caption(f"논문·자료명이 확인된 목록: {title_count:,}건 / 수집 {len(df):,}건")
         if not filtered.empty:
             st.dataframe(filtered, use_container_width=True, hide_index=True)
         else:
-            st.info("왼쪽 자료유형 필터에서 하나 이상 선택하세요.")
+            st.info("현재 선택한 유형과 일치하는 자료가 없습니다. 필터를 해제하면 전체 자료가 표시됩니다.")
         st.info("논문 분석 시 오른쪽 '논문 AI 요약' 탭에서 초록 또는 PDF를 추가해야 합니다.")
     elif not admin_key:
         st.info("관리자가 DATA_GO_KR_API_KEY를 설정하면 검색할 수 있습니다. 직접 업로드 분석은 가능합니다.")
@@ -273,6 +292,16 @@ with search_tab:
             )
             st.dataframe(attempts_df, hide_index=True, use_container_width=True)
             xml_diag = st.session_state.get("xml_diagnostics", [])
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                st.markdown("**수집된 자료 필드 확인 (필드명과 값이 있는 건수만 표시)**")
+                st.dataframe(
+                    pd.DataFrame([
+                        {"필드명": col,
+                         "값이 있는 자료 수": int(df[col].astype(str).str.strip().ne("").sum())}
+                        for col in df.columns
+                    ]),
+                    hide_index=True, use_container_width=True,
+                )
             if xml_diag:
                 st.markdown("**API XML 응답 구조 (인증키·논문 내용 제외)**")
                 st.dataframe(pd.DataFrame(xml_diag), hide_index=True, use_container_width=True)

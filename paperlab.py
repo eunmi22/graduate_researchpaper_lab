@@ -96,6 +96,29 @@ def describe_xml_structure(xml_data: bytes) -> dict:
     }
 
 
+def _canonical_field_name(field_name: str) -> str:
+    """API 응답에서 흔히 달라지는 필드 표기를 통일합니다.
+
+    원본에 없는 논문 제목이나 분류를 추측하여 만들지는 않습니다.
+    """
+    raw = str(field_name or "").strip()
+    simple = re.sub(r"[\s_\-\./／:()（）]+", "", raw).lower()
+    aliases = {
+        "controlno": "controlno", "controlnumber": "controlno",
+        "db": "DB", "dbname": "DB", "database": "DB",
+        "자료유형": "DB", "자료구분": "DB",
+        "자료명저자사항": "자료명/저자사항",
+        "자료명저자": "자료명/저자사항", "자료명": "자료명/저자사항",
+        "서명": "자료명/저자사항", "논문명": "자료명/저자사항",
+        "논문제목": "자료명/저자사항", "title": "자료명/저자사항",
+        "titleauthor": "자료명/저자사항", "titlename": "자료명/저자사항",
+        "발행자": "발행자", "publisher": "발행자",
+        "발행년": "발행년", "발행년도": "발행년",
+        "year": "발행년", "pubyear": "발행년", "publicationyear": "발행년",
+    }
+    return aliases.get(simple, raw)
+
+
 def _parse_record(record: ET.Element) -> dict:
     """기술문서의 name/value 목록 및 직접 필드형 레코드를 모두 처리."""
     row = {}
@@ -105,24 +128,23 @@ def _parse_record(record: ET.Element) -> dict:
         for item in direct_items:
             name = _direct_child_text(item, "name")
             value = _direct_child_text(item, "value")
-            # 제공기관이 필드명을 item 속성으로 내려주는 변형도 처리.
+            # 필드 이름이 name 요소가 아닌 item 속성에 저장된 경우도 처리
             if not name:
                 name = (item.get("name") or item.get("key") or "").strip()
                 if name and not value:
                     value = "".join(item.itertext()).strip()
             if name:
+                canonical_name = _canonical_field_name(name)
                 value = value.strip()
                 if value:
-                    row[name] = "; ".join(filter(None, [row.get(name), value]))
+                    existing = row.get(canonical_name, "")
+                    row[canonical_name] = "; ".join(
+                        part for part in (existing, value) if part
+                    )
         if row:
             return row
 
-    # <record><controlno>..</controlno><year>..</year>...</record> 형태.
-    aliases = {
-        "title": "자료명/저자사항", "titleauthor": "자료명/저자사항",
-        "publisher": "발행자", "year": "발행년", "pubyear": "발행년",
-        "publicationyear": "발행년", "dbname": "DB", "database": "DB",
-    }
+    # <record><controlno>..</controlno><db>..</db>...</record> 형식
     for child in record:
         tag = _local_tag(child.tag)
         if tag in {"header", "total", "item", "record", "row"}:
@@ -130,7 +152,11 @@ def _parse_record(record: ET.Element) -> dict:
         if len(child) == 0:
             value = (child.text or "").strip()
             if value:
-                row[aliases.get(tag, tag)] = value
+                canonical_name = _canonical_field_name(tag)
+                existing = row.get(canonical_name, "")
+                row[canonical_name] = "; ".join(
+                    part for part in (existing, value) if part
+                )
     return row
 
 
@@ -270,6 +296,8 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
                 df[column] = ""
         ordered = DISPLAY_COLUMNS + [c for c in df.columns if c not in DISPLAY_COLUMNS]
         df = df[ordered].fillna("")
+        # 실제 API가 DB(자료유형)를 보내지 않더라도 자료를 숨기지 않도록 표시값 부여.
+        df["DB"] = df["DB"].astype(str).str.strip().replace("", "미분류")
     return full_total, df.reset_index(drop=True)
 
 
