@@ -24,6 +24,8 @@ from reportlab.platypus import (HRFlowable, KeepTogether, PageBreak, Paragraph,
 
 from paperlab import (API_NAME, SOURCE_URL, SUMMARY_FIELDS,
                       calculate_trends, make_reference)
+from citation_styles import (REFERENCE_TEMPLATES, THESIS, THESIS_EXAMPLE,
+                             complete_citation, format_reference, missing_citation_fields)
 
 
 def _excel_safe(value):
@@ -37,20 +39,46 @@ def _excel_safe(value):
 
 def create_excel(df: pd.DataFrame, keyword: str, summary: dict | None = None,
                  chosen_paper: dict | None = None,
-                 data_origin: str = "국회도서관 API 검색 서지정보") -> bytes:
+                 data_origin: str = "국회도서관 API 검색 서지정보",
+                 citation_record: dict | None = None) -> bytes:
     """과제 부록용 다중 시트 Excel 생성(실제 API 결과만 저장)."""
     year_df, type_df = calculate_trends(df)
-    references = pd.DataFrame([
-        {"번호": i + 1, "참고문헌(임시)": make_reference(row),
-         "관리번호": row.get("controlno", ""), "출처": data_origin}
-        for i, row in enumerate(df.to_dict("records"))
+    # API 서지정보만으로는 모든 자료의 정식 참고문헌을 만들 수 없습니다.
+    # 선택한 자료에 사용자가 입력/검증한 메타데이터만 덮어씁니다.
+    selected_id = str((chosen_paper or {}).get("controlno", "")).strip()
+    selected_title = str((chosen_paper or {}).get("자료명/저자사항", "")).strip()
+    reference_rows = []
+    for i, row in enumerate(df.to_dict("records"), 1):
+        row_citation = complete_citation(row)
+        is_selected = bool(chosen_paper) and (
+            (selected_id and str(row.get("controlno", "")).strip() == selected_id)
+            or (not selected_id and selected_title
+                and str(row.get("자료명/저자사항", "")).strip() == selected_title)
+        )
+        if is_selected and citation_record:
+            row_citation = complete_citation(row, citation_record)
+        reference_rows.append({
+            "번호": i,
+            "자료유형": row_citation["type"],
+            "참고문헌(자료유형별)": format_reference(row_citation),
+            "미확인 항목": ", ".join(missing_citation_fields(row_citation)) or "없음 (원문 대조 권장)",
+            "관리번호": row.get("controlno", ""), "출처": data_origin,
+        })
+    references = pd.DataFrame(reference_rows)
+    if references.empty:
+        references = pd.DataFrame(columns=["번호", "자료유형", "참고문헌(자료유형별)",
+                                           "미확인 항목", "관리번호", "출처"])
+    # 과제에 사용할 자료유형별 형식을 Excel에서도 별도 확인할 수 있도록 안내 시트를 추가합니다.
+    template_sheet = pd.DataFrame([
+        {"자료유형": kind, "표기 기준": template, "예시": THESIS_EXAMPLE if kind == THESIS else ""}
+        for kind, template in REFERENCE_TEMPLATES.items()
     ])
     source = pd.DataFrame([
         {"항목": "데이터 출처", "내용": data_origin},
         {"항목": "원천 출처", "내용": SOURCE_URL if "API" in data_origin else "사용자 직접 제공"},
         {"항목": "실행 검색어", "내용": keyword},
         {"항목": "통계 범위", "내용": "수집한 검색 결과만 해당하며 전체 연구 동향이 아님"},
-        {"항목": "참고문헌 유의", "내용": "서지정보 기반 임시 표기. 제출 전 원문·서지사항 검증 필요"},
+        {"항목": "참고문헌 유의", "내용": "자료 유형별 과제용 표기 형식입니다. 미확인 항목은 원문에서 직접 확인·수정하세요."},
         {"항목": "AI 유의", "내용": "AI 출력은 원문과 대조하여 사실 확인 필요"},
     ])
     summary_rows = []
@@ -66,6 +94,7 @@ def create_excel(df: pd.DataFrame, keyword: str, summary: dict | None = None,
         "참고문헌": references,
         "AI요약": pd.DataFrame(summary_rows, columns=["항목", "AI 요약"]),
         "출처_주의사항": source,
+        "참고문헌_표기기준": template_sheet,
     }
     memory = BytesIO()
     with pd.ExcelWriter(memory, engine="openpyxl") as writer:
@@ -86,7 +115,7 @@ def create_excel(df: pd.DataFrame, keyword: str, summary: dict | None = None,
             for col_idx, col_cells in enumerate(ws.columns, 1):
                 letter = get_column_letter(col_idx)
                 col_name = str(ws.cell(1, col_idx).value or "")
-                target_width = 58 if col_name in ["자료명/저자사항", "참고문헌(임시)", "AI 요약", "내용"] else 22
+                target_width = 66 if col_name in ["자료명/저자사항", "참고문헌(자료유형별)", "표기 기준", "예시"] else (55 if col_name in ["AI 요약", "내용"] else 24)
                 ws.column_dimensions[letter].width = target_width
                 for cell in list(col_cells)[1:]:
                     cell.alignment = Alignment(vertical="top", wrap_text=True)
@@ -95,7 +124,7 @@ def create_excel(df: pd.DataFrame, keyword: str, summary: dict | None = None,
                         cell.fill = PatternFill("solid", fgColor="F3F7FB")
             # 많은 논문에 긴 제목이 있을 수 있으므로 행 높이 과도 확장 방지
             for r in range(2, ws.max_row + 1):
-                ws.row_dimensions[r].height = 31 if name != "참고문헌" else 48
+                ws.row_dimensions[r].height = 54 if name in ("참고문헌", "참고문헌_표기기준") else 31
     return memory.getvalue()
 
 
@@ -134,6 +163,7 @@ def create_pdf_report(
     type_df: pd.DataFrame,
     evidence_source: str,
     data_origin: str = "국회도서관 API 검색 서지정보",
+    citation_record: dict | None = None,
 ) -> bytes:
     """공식 표지 + 연구 통계 + 6개 항목 요약 보고서(PDF)."""
     regular, bold = _register_korean_font()
@@ -163,7 +193,7 @@ def create_pdf_report(
     body = []
     body.append(Spacer(1, 38 * mm))
     body.append(_para("연구자료 검색 · 분석 과제", styles["title"]))
-    body.append(_para("국회도서관 자료검색 API 활용 및 AI 요약 보고서", styles["subtitle"]))
+    body.append(_para("연구자료 검색·서지 확인 및 AI 요약 보고서", styles["subtitle"]))
     body.append(Spacer(1, 14 * mm))
     body.append(HRFlowable(width="100%", thickness=1.5, color=accent))
     body.append(Spacer(1, 18 * mm))
@@ -194,7 +224,7 @@ def create_pdf_report(
     body.append(_para(f"검색어: {keyword}", styles["body"]))
     body.append(_para(f"자료 출처: {data_origin}" + (f" ({SOURCE_URL})" if "API" in data_origin else ""), styles["body"]))
     body.append(_para("통계는 이번에 수집한 검색 결과에만 해당합니다. 전체 학술 연구 동향으로 일반화할 수 없습니다.", styles["small"]))
-    body.append(_para("2. 선택한 논문 서지정보", styles["section"]))
+    body.append(_para("2. 선택한 연구자료 서지정보", styles["section"]))
     for field, label in [("자료명/저자사항", "자료명/저자사항"),
                          ("발행자", "발행자"), ("발행년", "발행연도"),
                          ("DB", "자료유형"), ("controlno", "관리번호")]:
@@ -226,14 +256,41 @@ def create_pdf_report(
         text = ", ".join(f"{r['자료유형']} {r['건수']}건" for r in type_df.to_dict("records"))
         body.append(_para("자료유형별: " + text[:1000], styles["body"]))
     body.append(_para("5. 참고문헌 및 검증 유의사항", styles["section"]))
-    body.append(_para(make_reference(selected_paper), styles["body"]))
+    citation = complete_citation(selected_paper, citation_record)
+    body.append(_para(f"자료유형: {citation['type']}", styles["label"]))
+    body.append(_para(format_reference(citation), styles["body"]))
+    missing = missing_citation_fields(citation)
+    if missing:
+        body.append(_para("제출 전 확인할 항목: " + ", ".join(missing), styles["small"]))
     body.append(_para(
-        "이 참고문헌은 API에서 제공하는 서지정보로 자동 생성한 임시 표기입니다. "
-        "저자명·논문명·학술지·페이지·DOI와 인용 형식은 제출 전 원문에서 확인하세요.", styles["small"]))
+        "위 참고문헌은 사용자 지정 과제용 표기 양식입니다. API에 없는 정보는 '[미확인]'으로 표시하며, "
+        "정확한 저자·기관·권호·쪽수·DOI는 원문을 대조하고 작성자가 확인해야 합니다.", styles["small"]))
+
     body.append(Spacer(1, 3 * mm))
     body.append(_para(
         "본 요약은 AI 생성 문장입니다. 제공한 초록/PDF의 발췌 부분에 근거하며, "
         "원문 전체의 정확성·일관성을 보장하지 않습니다. 표절과 저작권 규정을 준수하세요.", styles["small"]))
+
+    # 별도 부록 페이지로 구성하여 제목이 이전 페이지 하단에 고립되지 않도록 처리.
+    body.append(PageBreak())
+    body.append(_para("부록. 자료 유형별 참고문헌 표기 기준", styles["section"]))
+    body.append(_para("아래 3가지 과제용 표기 형식 중 자료의 실제 유형에 맞게 선택하여 작성하세요.", styles["small"]))
+    guide_rows = [[_para("자료 유형", styles["label"]), _para("과제용 표기 형식", styles["label"])]]
+    for kind, template in REFERENCE_TEMPLATES.items():
+        guide_rows.append([_para(kind, styles["label"]), _para(template, styles["small"])])
+    guide_table = Table(guide_rows, colWidths=[36 * mm, 121 * mm], repeatRows=1, hAlign="LEFT")
+    guide_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, 0), light),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, accent),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.3, colors.HexColor("#DBE7ED")),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    body.append(guide_table)
+    body.append(Spacer(1, 2 * mm))
+    body.append(_para("학위논문 표기 예시: " + THESIS_EXAMPLE, styles["small"]))
 
     def footer(canvas, document):
         canvas.saveState()

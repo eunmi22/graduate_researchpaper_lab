@@ -32,6 +32,11 @@ from external_research import (
     research_source_names, research_search_destination, research_search_table,
 )
 from reporting import create_excel, create_pdf_report
+from citation_styles import (
+    JOURNAL, THESIS, REPORT, UNKNOWN, REFERENCE_TYPES, REFERENCE_TEMPLATES,
+    THESIS_EXAMPLE, suggested_citation, complete_citation, format_reference,
+    missing_citation_fields,
+)
 from riss_catalog import (
     RISS_NAME, RISS_SOURCE_URL, RissCatalogError,
     fetch_riss_catalog, summarize_riss, make_riss_excel,
@@ -109,9 +114,77 @@ def current_paper() -> tuple[dict | None, str]:
     return row, "사용자 직접 제공 논문"
 
 
+
+def edit_citation(paper: dict) -> dict[str, str]:
+    """선택 논문별 참고문헌 입력·검증 UI. 자료가 바뀌면 각 논문의 입력값을 구분 보관."""
+    initial = suggested_citation(paper)
+    unique = str(paper.get("controlno") or paper.get("자료명/저자사항") or "직접입력")
+    suffix = hashlib.sha256(unique.encode("utf-8")).hexdigest()[:14]
+
+    def text_field(key: str, label: str, note: str = "") -> str:
+        return st.text_input(
+            label, value=initial.get(key, ""), key=f"ref_{suffix}_{key}",
+            help=note or "원문 서지정보와 대조하여 직접 수정하세요.",
+        ).strip()
+
+    st.markdown("#### 📝 자료 유형별 참고문헌 정보 확인")
+    st.caption(
+        "국회도서관 API가 제공하지 않는 DOI·권호·페이지·학위정보는 임의 생성하지 않습니다. "
+        "서지정보와 논문 PDF를 대조하여 아래 항목을 수정하세요."
+    )
+    types = [UNKNOWN, *REFERENCE_TYPES]
+    category = st.selectbox(
+        "자료 종류 선택", types,
+        index=types.index(initial["type"]) if initial["type"] in types else 0,
+        key=f"ref_{suffix}_category",
+        help="검색 결과의 DB가 미분류라면 원문 종류를 직접 선택해 주세요.",
+    )
+    author = text_field("author", "저자 또는 기관명")
+    title = text_field("title", "논문/보고서 제목")
+    date_value = text_field("publication_date", "발행·학위수여 연월", "예: 2026년 8월 (연도만 알면 월 미확인이라고 표시)")
+    record = {"type": category, "author": author,
+              "title": title, "publication_date": date_value}
+
+    if category == JOURNAL:
+        c1, c2 = st.columns(2)
+        with c1:
+            record["journal"] = text_field("journal", "학술지명")
+            record["volume"] = text_field("volume", "권(Volume)")
+        with c2:
+            record["issue"] = text_field("issue", "호(Issue)")
+            record["pages"] = text_field("pages", "수록 페이지")
+        record["doi"] = text_field("doi", "DOI (있으면 입력)")
+    elif category == THESIS:
+        degrees = ["", "석사학위논문", "박사학위논문"]
+        default_degree = initial.get("degree", "")
+        record["degree"] = st.selectbox(
+            "학위 종류", degrees, index=degrees.index(default_degree)
+            if default_degree in degrees else 0, key=f"ref_{suffix}_degree",
+        )
+        record["university"] = text_field("university", "학위수여 대학·대학원", "예: 고려대학교 대학원")
+    elif category == REPORT:
+        record["publisher"] = text_field("publisher", "발행기관")
+        record["report_number"] = text_field("report_number", "보고서 번호")
+        c1, c2 = st.columns(2)
+        with c1:
+            record["doi"] = text_field("doi", "DOI (선택)")
+        with c2:
+            record["url"] = text_field("url", "보고서 URL (선택)")
+
+    citation = complete_citation(paper, record)
+    st.markdown("**과제보고서에 들어갈 참고문헌 미리보기**")
+    st.code(format_reference(citation), language=None)
+    missing = missing_citation_fields(citation)
+    if missing:
+        st.warning("제출 전 추가 확인: " + ", ".join(missing))
+    else:
+        st.success("표기 항목이 채워졌습니다. 실제 원문과 맞는지 마지막으로 확인하세요.")
+    return citation
+
+
 st.title("🎓 대학원 AI 논문 연구 도우미")
 st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
-st.caption("버전 1.9 · 실제 외부 키워드 검색 · 세종사이버대학교 dCollection · 학회·협회·연구보고서 검색")
+st.caption("버전 2.0 · 자료유형별 참고문헌 표기 · 외부자료 검색 · dCollection · RISS 서지통계")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -569,7 +642,7 @@ with ai_tab:
             if scholar_url:
                 st.link_button("🔎 Google Scholar에서 공개본 검색", scholar_url, use_container_width=True)
         st.caption("상세정보에서 '원문보기' 제공 여부를 확인하세요. 이용 제한 자료는 로그인/기관 방문이 필요할 수 있습니다.")
-        with st.expander("자동 생성 참고문헌(임시) 확인"):
+        with st.expander("API 서지정보 임시 참고문헌 (정식 인용은 과제 보고서 탭에서 수정)"):
             st.write(make_reference(paper))
             st.caption("원본 서지정보에 없는 DOI/쪽수/학술지 정보는 생성하지 않습니다.")
 
@@ -793,10 +866,24 @@ with submit_tab:
     ))
     summary_to_export = st.session_state.get("summary_result") if context_ok else None
 
+    with st.expander("📚 자료 종류별 참고문헌 표기 기준", expanded=True):
+        st.caption("이번 과제에 지정한 형식입니다. 제출 기관의 별도 인용 규정이 있으면 그 규정을 우선하세요.")
+        for kind, template in REFERENCE_TEMPLATES.items():
+            st.markdown(f"**{kind}**")
+            st.code(template, language=None)
+        st.caption("학위논문 표기 예시: " + THESIS_EXAMPLE)
+
+    report_citation = None
+    if selected:
+        report_citation = edit_citation(selected)
+    else:
+        st.info("참고문헌을 작성하려면 먼저 검색 목록에서 논문을 선택하거나 직접 업로드하세요.")
+
     if not report_df.empty:
         try:
             excel_data = create_excel(report_df, keyword_for_report,
-                                      summary_to_export, selected, data_origin=origin)
+                                      summary_to_export, selected, data_origin=origin,
+                                      citation_record=report_citation)
             st.download_button(
                 "📊 검색·통계·참고문헌 Excel 다운로드", excel_data,
                 file_name="논문_검색분석_과제자료.xlsx",
@@ -822,7 +909,7 @@ with submit_tab:
                 pdf_data = create_pdf_report(
                     keyword_for_report, metadata, selected, summary_to_export,
                     y_df, t_df, st.session_state.get("summary_origin", "사용자 제공 텍스트"),
-                    data_origin=origin,
+                    data_origin=origin, citation_record=report_citation,
                 )
                 st.download_button(
                     "📄 표지 포함 PDF 과제 보고서 다운로드", pdf_data,
@@ -847,14 +934,14 @@ with help_tab:
 - 자료 통계: 검색 결과 내 발행연도와 유형의 빈도 분석
 - AI 요약: 사용자가 붙여넣은 초록 또는 직접 업로드한 PDF 텍스트를 근거로 6개 항목 요약
 - RISS 종합목록: 기관코드·조사년도별 국내/국외 서지 구축 현황 및 Excel 다운로드 (논문 검색 기능 아님)
-- 과제 제출: 학교·전공·이름·과목 표지, PDF 보고서, Excel 통계 및 참고문헌
+- 과제 제출: 학교·전공·이름·과목 표지, PDF 보고서, Excel 통계 및 자료유형별 참고문헌 표기
 
 **주의 사항**
 - 원우 개인 OpenAI API 키는 암호형 입력창으로 받으며 파일과 데이터베이스에 저장하지 않습니다. 브라우저 세션이 유지되는 동안 Streamlit 서버가 처리할 수 있습니다. 사용 후 창을 닫으세요.
 - 업로드한 PDF 텍스트는 OpenAI API에 전달됩니다. 저작권·개인정보·연구윤리 및 과목별 AI 활용 기준을 확인하세요.
 - 스캔본 PDF는 OCR 기능이 없어 초록을 복사하여 넣어야 합니다. PDF 전체가 아니라 최대 30페이지의 일부 발췌 텍스트만 AI에 전달합니다.
 - API는 서지 목록 중심이며 논문 초록·본문을 자동으로 제공한다고 보장할 수 없습니다.
-- 표에 표시된 논문 제목/저자사항은 결합 필드이고 참고문헌은 임시 표기입니다. 정식 참고문헌 양식은 원문 확인 후 수정해야 합니다.
+- 참고문헌은 학술지 논문·학위논문·기관 연구보고서의 과제용 형식 중 선택합니다. 원문에 없는 서지정보는 '미확인'으로 표시하므로 제출 전에 반드시 검증하고 수정해야 합니다.
 - 공개 접속 주소를 아는 누구나 이용할 수 있습니다. 회원별 사용기록·개인 계정 기능은 구현하지 않았습니다.
 """)
     st.markdown(f"**데이터 출처:** [{API_NAME}]({SOURCE_URL}) · [{RISS_NAME}]({RISS_SOURCE_URL})")
