@@ -33,6 +33,12 @@ from external_research import (
 )
 from reporting import create_excel, create_pdf_report
 from ui_helpers import ai_summary_blockers
+from pdf_analysis import extract_pdf_pages
+from prompt_templates import ASSIGNMENT, READING, fields_for, DISPLAY_NAMES, mode_label
+from research_ai import (
+    analyze_paper, analysis_lines, analysis_summary, estimate_ai_calls,
+    normalize_analysis,
+)
 from citation_styles import (
     JOURNAL, THESIS, REPORT, UNKNOWN, REFERENCE_TYPES, REFERENCE_TEMPLATES,
     THESIS_EXAMPLE, suggested_citation, complete_citation, format_reference,
@@ -184,8 +190,8 @@ def edit_citation(paper: dict) -> dict[str, str]:
 
 
 st.title("🎓 대학원 AI 논문 연구 도우미")
-st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
-st.caption("버전 2.1 · 쉬운 AI 요약 화면 · 자료유형별 참고문헌 · dCollection · RISS 서지통계")
+st.caption("논문 검색 → PDF 전 페이지 분석 → AI 6항목 과제용 / 7문장 읽기용 → 보고서")
+st.caption("버전 2.2 · 두 가지 AI 요약 방식 · PDF 전체 페이지 추출 · 원문 근거 확인")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -647,36 +653,68 @@ with ai_tab:
                 st.link_button("🔎 Google Scholar에서 공개본 검색", scholar_url, use_container_width=True)
         st.caption("상세정보에서 '원문보기' 제공 여부를 확인하세요. 이용 제한 자료는 로그인/기관 방문이 필요할 수 있습니다.")
     # 서지정보 임시 참고문헌은 요약과 직접 관련 없으므로 보고서 탭에서만 확인합니다.
-    st.markdown("#### ① 논문 PDF 업로드")
-    st.caption("PDF를 올리면 내용을 자동 추출합니다. 초록을 다시 복사해 붙여넣을 필요는 없습니다.")
+    st.markdown("#### ① 요약 목적 선택")
+    mode_text = st.radio(
+        "원하는 요약 방식", ["과제 제출용 · 6개 항목", "논문 읽기용 · 7문장"],
+        horizontal=True, key="ai_summary_mode",
+        help="두 방식의 결과는 각각 독립적으로 저장되며, AI 요청도 각각 발생합니다.",
+    )
+    current_mode = ASSIGNMENT if mode_text.startswith("과제") else READING
+    st.caption("과제 제출용: 주제·목적·기술·활용·한계·발전 방향 / 논문 읽기용: 배경·질문·데이터·방법·결과·의의·후속 연구")
+
+    st.markdown("#### ② 논문 PDF 업로드")
+    st.caption("PDF를 올리면 **전체 페이지에서 추출 가능한 텍스트**를 읽고, AI에는 중요한 구간을 선별·분할해 전송합니다. 초록을 따로 입력할 필요는 없습니다.")
     uploaded = st.file_uploader("논문 PDF 파일 업로드 (최대 15MB)", type=["pdf"])
-    pdf_text = ""
+    pdf_doc = None
+    pdf_digest = ""
     pdf_count = None
     if uploaded is not None:
+        uploaded_bytes = uploaded.getvalue()
+        pdf_digest = hashlib.sha256(uploaded_bytes).hexdigest()
         try:
-            pdf_text, pdf_count = extract_pdf_text(uploaded.getvalue())
-            if len(pdf_text.strip()) < 80:
+            # 페이지별 민감 자료는 전역 Streamlit 캐시가 아닌 개별 사용자 세션에만 유지.
+            if st.session_state.get("pdf_doc_sha") != pdf_digest:
+                st.session_state.pdf_doc = extract_pdf_pages(uploaded_bytes)
+                st.session_state.pdf_doc_sha = pdf_digest
+            pdf_doc = st.session_state.pdf_doc
+            pdf_count = pdf_doc.total_pages
+            if pdf_doc.char_count < 80:
                 st.warning("PDF에서 읽을 수 있는 글자가 부족합니다. 스캔 PDF는 OCR을 지원하지 않으므로 아래에서 초록을 직접 입력하세요.")
             else:
-                st.success(f"PDF {pdf_count}페이지 중 최대 30페이지에서 텍스트 추출 완료 ({len(pdf_text):,}자)")
+                st.success(
+                    f"PDF 전체 {pdf_count:,}페이지 중 {pdf_doc.text_pages:,}페이지에서 텍스트 추출 완료 "
+                    f"({pdf_doc.char_count:,}자). AI 분석 시 결과·결론까지 포함하도록 대표 구간을 선별합니다."
+                )
+                if pdf_doc.clipped_pages:
+                    st.warning(f"문자 수가 매우 많은 {pdf_doc.clipped_pages}개 페이지는 페이지 앞뒤 일부만 보존했습니다.")
+                max_calls = estimate_ai_calls(pdf_doc)
+                st.caption(f"이번 PDF 분석은 OpenAI API를 약 {max_calls}회 호출합니다. 구간별 분석이 필요한 긴 PDF는 "
+                           "호출이 여러 번 발생하므로 개인 계정에 추가 비용이 청구될 수 있습니다.")
         except ValueError as exc:
             st.error(str(exc))
+            st.session_state.pop("pdf_doc", None)
+            st.session_state.pop("pdf_doc_sha", None)
+    else:
+        st.session_state.pop("pdf_doc", None)
+        st.session_state.pop("pdf_doc_sha", None)
 
-    # 텍스트 입력은 PDF가 없거나 스캔 PDF일 때의 보조 수단으로 접어 둡니다.
-    usable_pdf_text = pdf_text if len(pdf_text.strip()) >= 80 else ""
+    usable_pdf_doc = pdf_doc if pdf_doc is not None and pdf_doc.char_count >= 80 else None
     with st.expander("✍️ PDF가 없거나 글자를 읽지 못할 때: 초록 직접 입력 (선택)",
-                     expanded=bool(uploaded is not None and not usable_pdf_text)):
+                     expanded=bool(uploaded is not None and usable_pdf_doc is None)):
         abstract = st.text_area(
             "초록 또는 본문 발췌 붙여넣기 (선택)", height=155,
             placeholder="PDF를 확보하지 못했을 때 원문에서 확인한 초록을 붙여넣으세요.",
             help="PDF 텍스트 추출에 성공했다면 이 입력란은 비워 두셔도 됩니다.",
         )
-        st.caption("PDF의 텍스트가 확보되어 있다면 이 입력란은 비워 두어도 AI 요약이 가능합니다.")
+        st.caption("PDF 없이 초록만 제공하면 근거 페이지는 표시할 수 없습니다.")
 
-    evidence = prepare_evidence(abstract=abstract, pdf_text=usable_pdf_text)
-    evidence_id = hashlib.sha256(evidence.encode("utf-8")).hexdigest() if evidence else ""
+    # 사용자가 제공한 자료와 모드가 바뀌면 다른 결과를 잘못 재사용하지 않도록 해시로 구분.
+    material_digest = hashlib.sha256((pdf_digest + "|" + abstract.strip()).encode("utf-8")).hexdigest()
+    evidence_id = material_digest if (usable_pdf_doc or abstract.strip()) else ""
     paper_id = "" if paper is None else str(paper.get("controlno") or paper.get("자료명/저자사항"))
-    st.markdown("#### ② 논문 확인 후 AI 요약")
+    evidence = abstract.strip() + (" ".join(p.text[:200] for p in usable_pdf_doc.pages if p.text.strip()) if usable_pdf_doc else "")
+    context_key = (paper_id, evidence_id, current_mode)
+    st.markdown("#### ③ 논문 확인 후 AI 요약")
     confirmed = st.checkbox("선택한 논문과 업로드 PDF/초록이 같은 논문임을 확인했습니다.")
     blockers = ai_summary_blockers(paper, confirmed, evidence, user_ai_key)
     enabled = not blockers
@@ -694,30 +732,84 @@ with ai_tab:
             st.info("선택 논문과 PDF/초록이 일치하는지 확인한 뒤 체크해 주세요.")
     else:
         st.success("AI 요약 준비 완료! 아래 버튼을 누르세요.")
-    if st.button("✨ 6개 항목 AI 요약 생성", type="primary", disabled=not enabled):
+
+    generate_caption = "✨ 6개 항목 AI 요약 생성" if current_mode == ASSIGNMENT else "✨ 7문장 논문 읽기 요약 생성"
+    if st.button(generate_caption, type="primary", disabled=not enabled):
         try:
-            with st.spinner("제공한 초록·PDF의 내용만을 바탕으로 요약하고 있습니다..."):
-                summary = summarize_paper(user_ai_key, paper["자료명/저자사항"], evidence, model=model)
-            st.session_state.summary_result = summary
+            with st.spinner("논문의 배경·방법·결과·결론을 확인하고 원문 근거를 대조하는 중..."):
+                if usable_pdf_doc is None and current_mode == ASSIGNMENT:
+                    # 구형 요약 함수와 과제 제출 형식을 유지 (초록 전용 1회 호출)
+                    legacy = summarize_paper(user_ai_key, paper["자료명/저자사항"], abstract, model=model)
+                    result = normalize_analysis({"items": [
+                        {"key": name, "text": legacy[name], "evidence": []} for name in fields_for(ASSIGNMENT)
+                    ]}, ASSIGNMENT, None, abstract)
+                    result.update({"model": model, "ai_calls": 1, "strategy": "입력 초록 · 단일 AI 분석",
+                                   "coverage": {"total_pages": 0, "text_pages": 0,
+                                                "selected_pages": [], "selected_page_count": 0,
+                                                "clipped_pages": 0, "chars_extracted": len(abstract.strip()), "sections": {}}})
+                else:
+                    result = analyze_paper(
+                        user_ai_key, paper["자료명/저자사항"], current_mode,
+                        pdf_doc=usable_pdf_doc, abstract=abstract, model=model,
+                    )
+            saved = st.session_state.get("analysis_results", {})
+            saved[context_key] = result
+            st.session_state.analysis_results = saved
+            st.session_state.summary_result = analysis_summary(result)  # 이전 버전 인터페이스 호환
             st.session_state.summary_context = (paper_id, evidence_id)
             st.session_state.summary_origin = "+".join(filter(None, [
-                "입력 초록" if abstract.strip() else "", "사용자 PDF" if pdf_text.strip() else ""
+                "입력 초록" if abstract.strip() else "", "사용자 PDF" if usable_pdf_doc else "",
             ]))
+            st.success(f"{mode_label(current_mode)} 생성 완료 · OpenAI 요청 {result['ai_calls']}회")
         except Exception as exc:
-            # OpenAI 에러 메세지에 사용자 입력이 섞여 있을 수 있어 유형만 표시
+            # 외부 서비스 에러 본문에는 입력 내용이 섞일 수 있으므로 유형만 화면 표시
             st.error(f"AI 요약 생성 실패 ({type(exc).__name__}). API 키, 결제 상태, 모델 권한, 본문을 확인하세요.")
 
-    summary_current = st.session_state.get("summary_result")
-    if summary_current and st.session_state.get("summary_context") == (paper_id, evidence_id):
-        st.subheader("6개 항목 · 6줄 요약")
-        for i, (key, value) in enumerate(summary_current.items(), 1):
-            st.write(f"**{i}. {key}:** {value}")
-        st.code(summary_lines(summary_current), language=None)
-        st.download_button("요약 텍스트(.txt) 다운로드", summary_lines(summary_current).encode("utf-8-sig"),
-                           file_name="논문_6개항목_요약.txt", mime="text/plain")
-        st.caption("AI 생성 요약입니다. 원문과 대조해 잘못되거나 과도한 주장이 없는지 확인하세요.")
+    result = st.session_state.get("analysis_results", {}).get(context_key)
+    if result:
+        st.subheader(f"{mode_label(current_mode)} 분석 결과")
+        for index, item in enumerate(result["items"], 1):
+            st.markdown(f"**{index}. {DISPLAY_NAMES.get(item['key'], item['key'])}:** {item['text']}")
+            if item.get("evidence"):
+                with st.expander(f"📄 {index}번 항목 근거 확인 (원문 문구 일치)", expanded=False):
+                    for quote in item["evidence"]:
+                        ref = f"PDF 기준 {quote['page']}쪽" if quote['page'] is not None else "사용자 입력 초록"
+                        st.caption(f"{ref} · {quote['status']}")
+                        st.write(quote["quote"])
+                    st.caption("문구·페이지 일치만 확인했습니다. 의미 해석의 정확성은 원문과 직접 대조하세요.")
+            else:
+                st.caption("이 항목은 검증된 직접 인용이 없습니다. 원문에서 사실 여부를 확인해 주세요.")
+        st.code(analysis_lines(result), language=None)
+        st.download_button("요약 텍스트(.txt) 다운로드", analysis_lines(result).encode("utf-8-sig"),
+                           file_name=f"논문_{'6항목' if current_mode == ASSIGNMENT else '7문장'}_요약.txt",
+                           mime="text/plain", key=f"summary_txt_{current_mode}")
+        info = result.get("coverage", {})
+        if info.get("total_pages", 0):
+            st.caption(f"PDF {info['total_pages']}페이지 중 대표 {info['selected_page_count']}페이지를 AI 분석 근거로 선별 · "
+                       f"검증된 직접 인용 {result.get('evidence_verified_count', 0)}개 · "
+                       f"일치 검증 실패 {result.get('unverified_quote_count', 0)}개(근거에서 제외)")
+            with st.expander("📋 분석된 PDF 범위와 근거 페이지", expanded=False):
+                for section, pages_used in info.get("sections", {}).items():
+                    st.write(f"**{section}:** PDF 페이지 {', '.join(map(str, pages_used))}")
+                st.caption("PDF 전체에서 텍스트를 추출했지만 AI에 모든 문장을 보내지는 않았습니다. "
+                           "장 제목·대표 페이지의 발췌를 분석한 결과이므로 원문 전체의 완전성을 보장하지 않습니다.")
+        if current_mode == READING:
+            st.markdown("#### ④ 나의 생각 / 추가 연구 질문")
+            note_id = hashlib.sha256(f"{paper_id}|{evidence_id}".encode()).hexdigest()[:16]
+            note_key = f"research_note_{note_id}"
+            # 위젯이 요약 모드 전환으로 사라져도 노트를 세션에서 잃지 않도록 분리 보관.
+            notes = st.session_state.setdefault("research_notes", {})
+            if note_key not in st.session_state:
+                st.session_state[note_key] = notes.get(note_id, "")
+            entered_note = st.text_area(
+                "AI가 작성하지 않는 나의 연구노트", key=note_key, height=130,
+                placeholder="논문에서 인상 깊었던 점, 더 찾아볼 연구 질문을 직접 적어 보세요.",
+            )
+            st.session_state.research_notes[note_id] = entered_note
+            st.caption("이 내용은 사용자 본인이 작성하며, 다운로드 보고서에만 포함됩니다. 서버에 영구 저장하지 않습니다.")
+        st.caption("AI 생성 문장입니다. 원문 인용 문구가 일치해도 결론의 타당성은 사람이 재확인해야 합니다.")
     else:
-        st.info("현재 선택한 논문과 근거 자료에 대한 요약이 없습니다. AI 키·논문·초록/PDF를 준비해 요약을 생성하세요.")
+        st.info("현재 논문·근거 자료·선택한 요약 방식의 분석 결과가 없습니다. AI 키·PDF를 준비하고 요약을 생성하세요.")
 
 with trends_tab:
     st.subheader("3. 수집한 자료의 연구 동향")
@@ -889,10 +981,22 @@ with submit_tab:
     keyword_for_report = st.session_state.get("search_keyword", "")
     if st.session_state.get("paper_mode") == "논문 직접 업로드":
         keyword_for_report = selected.get("자료명/저자사항", "") if selected else ""
-    context_ok = bool(selected and st.session_state.get("summary_context") == (
-        str(selected.get("controlno") or selected.get("자료명/저자사항")), evidence_id
-    ))
-    summary_to_export = st.session_state.get("summary_result") if context_ok else None
+    st.markdown("### 출력할 요약 모드")
+    report_mode_label = st.radio(
+        "보고서 형식", ["과제 제출용 · 6개 항목", "논문 읽기용 · 7문장"],
+        horizontal=True, key="report_summary_mode",
+        help="분석을 생성한 모드만 파일에 반영됩니다. 각 모드는 따로 생성해 주세요.",
+    )
+    report_mode = ASSIGNMENT if report_mode_label.startswith("과제") else READING
+    report_paper_id = str(selected.get("controlno") or selected.get("자료명/저자사항")) if selected else ""
+    result_to_export = st.session_state.get("analysis_results", {}).get((report_paper_id, evidence_id, report_mode))
+    summary_to_export = analysis_summary(result_to_export) if result_to_export else None
+    note_id = hashlib.sha256(f"{report_paper_id}|{evidence_id}".encode()).hexdigest()[:16]
+    note_text = st.session_state.get("research_notes", {}).get(note_id, "") if report_mode == READING else ""
+    if result_to_export:
+        st.success(f"{mode_label(report_mode)} 분석 결과를 포함하여 보고서를 생성합니다.")
+    else:
+        st.info("현재 선택한 논문·자료에 대한 이 모드의 요약 결과가 없습니다. 먼저 '논문 AI 요약' 탭에서 생성하세요.")
 
     with st.expander("📚 자료 종류별 참고문헌 표기 기준 (필요할 때만 열기)", expanded=False):
         st.caption("이번 과제에 지정한 형식입니다. 제출 기관의 별도 인용 규정이 있으면 그 규정을 우선하세요.")
@@ -913,7 +1017,9 @@ with submit_tab:
         try:
             excel_data = create_excel(report_df, keyword_for_report,
                                       summary_to_export, selected, data_origin=origin,
-                                      citation_record=report_citation)
+                                      citation_record=report_citation,
+                                      summary_mode=report_mode, analysis_result=result_to_export,
+                                      research_note=note_text)
             st.download_button(
                 "📊 검색·통계·참고문헌 Excel 다운로드", excel_data,
                 file_name="논문_검색분석_과제자료.xlsx",
@@ -940,16 +1046,19 @@ with submit_tab:
                     keyword_for_report, metadata, selected, summary_to_export,
                     y_df, t_df, st.session_state.get("summary_origin", "사용자 제공 텍스트"),
                     data_origin=origin, citation_record=report_citation,
+                    summary_mode=report_mode, analysis_result=result_to_export,
+                    research_note=note_text,
                 )
                 st.download_button(
                     "📄 표지 포함 PDF 과제 보고서 다운로드", pdf_data,
-                    file_name="논문_AI분석_과제보고서.pdf", mime="application/pdf",
+                    file_name=("논문_AI분석_과제보고서.pdf" if report_mode == ASSIGNMENT
+                               else "논문_7문장_읽기노트.pdf"), mime="application/pdf",
                     type="primary", use_container_width=True,
                 )
             except Exception as exc:
                 st.error(f"PDF 보고서 생성 실패: {type(exc).__name__}")
     else:
-        st.info("PDF 보고서를 만들려면 '논문 AI 요약' 탭에서 선택한 논문의 6개 항목 요약을 생성하세요.")
+        st.info("PDF 보고서를 만들려면 '논문 AI 요약' 탭에서 선택한 모드의 요약을 먼저 생성하세요.")
 
 with help_tab:
     st.info("대학 dCollection 및 학회·협회·보고서 검색은 입력 키워드로 외부 검색 결과를 여는 기능입니다. 국회도서관 API의 앱 내부 검색과 구분됩니다.")
@@ -962,14 +1071,14 @@ with help_tab:
 **기능 구성**
 - 국회도서관 API 논문 검색: 별도 비용 없는 공공데이터 API, 관리자 키 사용
 - 자료 통계: 검색 결과 내 발행연도와 유형의 빈도 분석
-- AI 요약: PDF를 우선 업로드하고 텍스트를 자동 추출하여 6개 항목 요약. PDF가 없거나 스캔본일 때만 접이식 초록 입력 사용
+- AI 요약: 6항목 과제용과 7문장 논문 읽기용 중 선택. PDF 전체 페이지 텍스트 추출 후 배경·방법·결과·결론 구간을 선별해 분석. PDF가 없거나 스캔본일 때만 접이식 초록 입력 사용
 - RISS 종합목록: 기관코드·조사년도별 국내/국외 서지 구축 현황 및 Excel 다운로드 (논문 검색 기능 아님)
 - 과제 제출: 학교·전공·이름·과목 표지, PDF 보고서, Excel 통계 및 자료유형별 참고문헌 표기
 
 **주의 사항**
 - 원우 개인 OpenAI API 키는 암호형 입력창으로 받으며 파일과 데이터베이스에 저장하지 않습니다. 브라우저 세션이 유지되는 동안 Streamlit 서버가 처리할 수 있습니다. 사용 후 창을 닫으세요.
 - 업로드한 PDF 텍스트는 OpenAI API에 전달됩니다. 저작권·개인정보·연구윤리 및 과목별 AI 활용 기준을 확인하세요.
-- 스캔본 PDF는 OCR 기능이 없어 초록을 복사하여 넣어야 합니다. PDF 전체가 아니라 최대 30페이지의 일부 발췌 텍스트만 AI에 전달합니다.
+- 스캔본 PDF는 OCR 기능이 없어 초록을 복사하여 넣어야 합니다. PDF 전체에서 텍스트를 추출하지만 AI에는 핵심 페이지의 일부를 전달하고, 긴 PDF는 구간별로 분석합니다. 섹션의 모든 내용을 읽거나 Figure 이미지를 해석하는 것은 아닙니다.
 - API는 서지 목록 중심이며 논문 초록·본문을 자동으로 제공한다고 보장할 수 없습니다.
 - 참고문헌 편집과 자료별 표기 기준은 '과제 보고서' 탭에서 펼쳐 확인할 수 있습니다. 학술지 논문·학위논문·기관 연구보고서의 과제용 형식 중 선택합니다. 원문에 없는 서지정보는 '미확인'으로 표시하므로 제출 전에 반드시 검증하고 수정해야 합니다.
 - 공개 접속 주소를 아는 누구나 이용할 수 있습니다. 회원별 사용기록·개인 계정 기능은 구현하지 않았습니다.

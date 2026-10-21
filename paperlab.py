@@ -13,7 +13,10 @@ from xml.etree import ElementTree as ET
 import fitz
 import pandas as pd
 import requests
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # 무료 검색·오프라인 실습은 SDK 설치 없이도 가능
+    OpenAI = None
 
 API_BASE_URL = "https://apis.data.go.kr/9720000/searchservice/basic"
 SOURCE_URL = "https://www.data.go.kr/"
@@ -452,6 +455,8 @@ def summarize_paper(api_key: str, title: str, evidence: str,
     if model not in {"gpt-4.1-mini", "gpt-4o-mini"}:
         raise ValueError("지원하지 않는 AI 모델입니다.")
 
+    if OpenAI is None:
+        raise RuntimeError("OpenAI 요약을 사용하려면 python -m pip install openai 를 실행하세요.")
     client = OpenAI(api_key=api_key.strip(), timeout=55.0, max_retries=1)
     system = (
         "당신은 학술 논문 내용을 근거 중심으로 검토하는 연구 조교입니다. "
