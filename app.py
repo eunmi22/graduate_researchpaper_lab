@@ -245,13 +245,13 @@ with st.sidebar:
 
     # University settings stay in the left sidebar; external links appear at right.
     st.divider()
-    with st.expander("\U0001f3db \ub300\ud559\ubcc4 dCollection \uc6d0\ubb38 \ucc3e\uae30", expanded=False):
+    with st.expander("\U0001f3db \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30", expanded=False):
         st.selectbox(
             "\uc6d0\ubb38\uc744 \ucc3e\uc744 \ub300\ud559", universities(), key="dcollection_university",
-            help="\uac80\uc99d\ub41c \ub300\ud559\ubcc4 \uc800\uc7a5\uc18c\ub85c \uc774\ub3d9\ud569\ub2c8\ub2e4. \uae30\ud0c0 \ub300\ud559\uc740 \ucc38\uc5ec\ub300\ud559 \ubaa9\ub85d\uc744 \uc0ac\uc6a9\ud558\uc138\uc694.",
+            help="\ub300\ud559\ubcc4 dCollection \ub610\ub294 \ud559\uad50 \uacf5\uc2dd \ub17c\ubb38\uac80\uc0c9 \uc548\ub0b4\ub85c \uc774\ub3d9\ud569\ub2c8\ub2e4.",
         )
         st.text_input(
-            "dCollection\uc5d0\uc11c \ucc3e\uc744 \ub17c\ubb38 \uc81c\ubaa9\u00b7\ud0a4\uc6cc\ub4dc",
+            "\ud559\uad50 \uc0ac\uc774\ud2b8\uc5d0\uc11c \ucc3e\uc744 \ub17c\ubb38 \uc81c\ubaa9\u00b7\ud0a4\uc6cc\ub4dc",
             value=st.session_state.get("search_keyword", ""),
             key="dcollection_query",
             help="\uac80\uc0c9\uc5b4\ub97c \uc9e7\uac8c \uc870\uc815\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. \uc678\ubd80 \uc0ac\uc774\ud2b8\uc5d0\uc11c \uc7ac\uac80\uc0c9\ud569\ub2c8\ub2e4.",
@@ -436,17 +436,17 @@ with search_tab:
         st.warning(
             "\uad6d\ud68c\ub3c4\uc11c\uad00 API \uac80\uc0c9\uc5d0\uc11c \uc870\ud68c\ub41c \uc790\ub8cc\uac00 0\uac74\uc785\ub2c8\ub2e4. "
             "\ubbf8\ub4f1\ub85d\uc774\ub77c\uace0 \ub2e8\uc815\ud558\uc9c0 \ub9c8\uc138\uc694. "
-            "\uc544\ub798 \ub300\ud559\ubcc4 dCollection\uc5d0\uc11c \uc7ac\uac80\uc0c9\ud574 \ubcf4\uc138\uc694."
+            "\uc544\ub798 \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30 \ub9c1\ud06c\ub97c \ud655\uc778\ud574 \ubcf4\uc138\uc694."
         )
     with st.expander(
-        "\U0001f3db \ub300\ud559\ubcc4 dCollection\uc5d0\uc11c \uc6d0\ubb38 \ucc3e\uae30",
+        "\U0001f3db \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30",
         expanded=zero_results,
     ):
         dc_university = st.session_state.get("dcollection_university", universities()[0])
         dc_query = st.session_state.get("dcollection_query", st.session_state.get("search_keyword", ""))
         links = make_dcollection_destinations(dc_university, dc_query)
         st.caption(
-            "\uc67c\ucabd\uc758 '\ub300\ud559\ubcc4 dCollection \uc6d0\ubb38 \ucc3e\uae30'\uc5d0\uc11c "
+            "\uc67c\ucabd\uc758 '\ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30'\uc5d0\uc11c "
             "\ub300\ud559\uacfc \uac80\uc0c9\uc5b4\ub97c \ubc14\uafbc \uc218 \uc788\uc2b5\ub2c8\ub2e4."
         )
         st.write(f"\uc120\ud0dd\ud55c \ub300\ud559: **{dc_university}**")
@@ -458,7 +458,7 @@ with search_tab:
         a, b = st.columns(2)
         with a:
             st.link_button(
-                "\U0001f4d6 \ub300\ud559 dCollection \uc5f4\uae30", links["repository_url"],
+                links["button_label"], links["repository_url"],
                 use_container_width=True,
             )
         with b:
@@ -470,10 +470,12 @@ with search_tab:
             "\U0001f3eb \uc804\uad6d dCollection \ucc38\uc5ec\ub300\ud559 \ubaa9\ub85d \ubcf4\uae30",
             links["directory_url"], use_container_width=True,
         )
+        if links["source_note"]:
+            st.info(links["source_note"])
         if dc_university == ALL_UNIVERSITIES:
             st.info("\ub300\ud559\uba85\uc744 \ucc38\uc5ec\ub300\ud559 \ubaa9\ub85d\uc5d0\uc11c \ucc3e\uc740 \ub4a4 \ud574\ub2f9 \ub300\ud559\uc758 \uc800\uc7a5\uc18c\ub85c \uc774\ub3d9\ud558\uc138\uc694.")
         st.caption(
-            "\ub300\ud559 \uc800\uc7a5\uc18c \ubc84\ud2bc\uc740 \uacf5\uc2dd \uac80\uc0c9 \ud398\uc774\uc9c0\ub85c \uc774\ub3d9\ud569\ub2c8\ub2e4. "
+            "\ub300\ud559\ubcc4 \ub9c1\ud06c\ub294 dCollection \uc800\uc7a5\uc18c \ub610\ub294 \uacf5\uc2dd \ub17c\ubb38\uac80\uc0c9 \uc548\ub0b4 \ud398\uc774\uc9c0\uc785\ub2c8\ub2e4. "
             "\uc6f9 \uac80\uc0c9\uc740 Google \uacb0\uacfc\ub85c \uc774\ub3d9\ud558\uba70, \uc7ac\uc0ac\uc6a9\uc744 \uc704\ud55c \uc870\ud68c\uc694\uccad/API\uac00 \uc544\ub2d9\ub2c8\ub2e4. "
             "\ub17c\ubb38 \uc6d0\ubb38\uc740 \uacf5\uac1c\u00b7\uc800\uc791\uad8c \uc870\uac74\uc5d0 \ub530\ub77c \uc5f4\ub78c\uc774 \uc81c\ud55c\ub420 \uc218 \uc788\uc2b5\ub2c8\ub2e4."
         )
