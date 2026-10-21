@@ -20,10 +20,15 @@ from dotenv import load_dotenv
 
 from paperlab import (
     API_NAME, SOURCE_URL, PaperAPIError, calculate_trends, extract_pdf_text,
-    make_reference, prepare_evidence, search_candidates, search_papers, select_type,
+    add_access_links, clean_paper_title, make_reference, nanet_detail_url,
+    scholar_search_url, prepare_evidence, search_candidates, search_papers, select_type,
     summarize_paper, summary_lines,
 )
 from reporting import create_excel, create_pdf_report
+from riss_catalog import (
+    RISS_NAME, RISS_SOURCE_URL, RissCatalogError,
+    fetch_riss_catalog, summarize_riss, make_riss_excel,
+)
 
 st.set_page_config(
     page_title="대학원 AI 논문 연구 도우미", page_icon="🎓", layout="wide",
@@ -53,6 +58,28 @@ def admin_api_key() -> str:
     return os.getenv("DATA_GO_KR_API_KEY", "")
 
 
+def riss_api_endpoint() -> str:
+    """RISS Swagger GET 엔드포인트는 전체 경로가 확정된 뒤 관리자만 등록."""
+    try:
+        address = st.secrets.get("RISS_API_URL", "")
+        if address:
+            return str(address).strip()
+    except (FileNotFoundError, OSError, KeyError):
+        pass
+    return os.getenv("RISS_API_URL", "").strip()
+
+
+def riss_api_key() -> str:
+    """보통 기존 공공데이터 서비스키 재사용; 별도 승인키가 있으면 선택 사용."""
+    try:
+        value = st.secrets.get("RISS_API_KEY", "")
+        if value:
+            return str(value)
+    except (FileNotFoundError, OSError, KeyError):
+        pass
+    return os.getenv("RISS_API_KEY", "") or admin_api_key()
+
+
 def current_paper() -> tuple[dict | None, str]:
     """검색 선택과 직접 업로드 중 하나의 서지정보를 보고서에 사용."""
     if st.session_state.get("paper_mode") == "검색 목록에서 선택":
@@ -77,7 +104,7 @@ def current_paper() -> tuple[dict | None, str]:
 
 st.title("🎓 대학원 AI 논문 연구 도우미")
 st.caption("논문 검색 → 연구 동향 분석 → 근거 기반 AI 6줄 요약 → 과제 제출 보고서")
-st.caption("버전 1.4 · 자료유형이 없어도 검색 결과 표시")
+st.caption("버전 1.6 · 국회도서관 상세·원문 확인 링크와 공개본 검색 추가")
 
 # -------------------------------------------------------------------------
 # 왼쪽: 논문 주제 검색 / 자료유형 필터 / 개인 AI 키 / 과제 표지 설정
@@ -211,6 +238,44 @@ with st.sidebar:
         st.session_state.filtered_df = pd.DataFrame()
 
     st.divider()
+    with st.expander("📚 RISS 서지 구축 통계", expanded=False):
+        st.caption("기관코드·조사년도·국내/국외 MARC 구축 건수. 개별 논문 검색이 아닙니다.")
+        riss_endpoint = riss_api_endpoint()
+        riss_key = riss_api_key()
+        if not riss_endpoint:
+            st.info("관리자가 Swagger의 GET 전체 경로를 RISS_API_URL에 추가하면 사용할 수 있습니다.")
+        if not riss_key:
+            st.warning("승인된 RISS API용 공공데이터 인증키를 설정하세요.")
+        with st.form("riss_load_form", clear_on_submit=False):
+            riss_pages = st.selectbox("가져올 페이지 수", [1, 2, 3, 5, 10], index=2)
+            riss_per_page = st.selectbox("페이지당 기관 기록", [10, 20, 50, 100], index=3)
+            load_riss = st.form_submit_button(
+                "📊 RISS 통계 불러오기", use_container_width=True,
+                disabled=not (bool(riss_endpoint) and bool(riss_key)),
+            )
+        if load_riss:
+            st.session_state.riss_notice = None
+            st.session_state.riss_df = pd.DataFrame()
+            try:
+                with st.spinner("RISS 종합목록 통계를 가져오는 중입니다..."):
+                    count, riss_df, columns = fetch_riss_catalog(
+                        riss_key, riss_endpoint,
+                        pages=riss_pages, per_page=riss_per_page,
+                    )
+                st.session_state.riss_df = riss_df
+                st.session_state.riss_total = count
+                st.session_state.riss_fields = columns
+                st.session_state.riss_notice = (
+                    "success", f"RISS 통계 {len(riss_df):,}건 수집 / API 전체 {count:,}건",
+                )
+            except (ValueError, RissCatalogError) as exc:
+                st.session_state.riss_notice = ("error", str(exc))
+            except Exception as exc:
+                st.session_state.riss_notice = (
+                    "error", f"RISS 통계 요청 실패 ({type(exc).__name__}). 관리자에게 문의하세요.",
+                )
+
+    st.divider()
     st.header("🤖 개인 AI 설정")
     user_ai_key = st.text_input(
         "본인의 OpenAI API 키", type="password",
@@ -235,8 +300,8 @@ with st.sidebar:
     st.caption("공개 링크 서비스 · 로그인 없음 · 브라우저별 세션")
 
 # 오른쪽 메인 영역: 검색/AI요약/통계/다운로드 결과만 배치합니다.
-search_tab, ai_tab, trends_tab, submit_tab, help_tab = st.tabs(
-    ["📚 검색 결과", "🤖 논문 AI 요약", "📊 연구 동향", "📄 과제 보고서", "ℹ️ 이용 안내"]
+search_tab, ai_tab, trends_tab, riss_tab, submit_tab, help_tab = st.tabs(
+    ["📚 검색 결과", "🤖 논문 AI 요약", "📊 연구 동향", "📖 RISS 서지통계", "📄 과제 보고서", "ℹ️ 이용 안내"]
 )
 
 with search_tab:
@@ -273,7 +338,30 @@ with search_tab:
         else:
             st.caption(f"논문·자료명이 확인된 목록: {title_count:,}건 / 수집 {len(df):,}건")
         if not filtered.empty:
-            st.dataframe(filtered, use_container_width=True, hide_index=True)
+            # 국회도서관에서 확인된 관리번호를 공식 상세정보 주소로 연결합니다.
+            # PDF 바로 다운로드 링크가 아니며 권한은 국회도서관 사이트에서 판단합니다.
+            display_df = add_access_links(filtered)
+            st.dataframe(
+                display_df, use_container_width=True, hide_index=True,
+                column_config={
+                    "자료명/저자사항": st.column_config.TextColumn(
+                        "논문·자료명 / 저자사항", width="large",
+                    ),
+                    "국회도서관 상세·원문 확인": st.column_config.LinkColumn(
+                        "📖 상세·원문 확인", width="medium", display_text="국회도서관에서 열기 ↗",
+                        help="국회도서관 상세정보에서 원문보기/다운로드 제공 여부를 확인합니다.",
+                    ),
+                    "공개본 검색": st.column_config.LinkColumn(
+                        "🔎 공개본 검색", width="medium", display_text="Scholar에서 찾기 ↗",
+                        help="Google Scholar 검색 페이지로 이동합니다. 원문이 반드시 제공되는 것은 아닙니다.",
+                    ),
+                },
+            )
+            st.caption(
+                "📖 상세·원문 확인: 국회도서관 공식 상세페이지로 이동합니다. "
+                "원문 열람·다운로드 가능 여부는 해당 자료의 저작권·이용조건에 따라 다릅니다. "
+                "공개본 검색은 Google Scholar의 제목 검색이며 PDF 제공을 보장하지 않습니다."
+            )
         else:
             st.info("현재 선택한 유형과 일치하는 자료가 없습니다. 필터를 해제하면 전체 자료가 표시됩니다.")
         st.info("논문 분석 시 오른쪽 '논문 AI 요약' 탭에서 초록 또는 PDF를 추가해야 합니다.")
@@ -346,7 +434,19 @@ with ai_tab:
 
     paper, origin = current_paper()
     if paper:
-        st.markdown(f"**선택 논문:** {paper.get('자료명/저자사항', '')}")
+        st.markdown(f"**선택 논문:** {clean_paper_title(paper.get('자료명/저자사항', ''))}")
+        detail_url = nanet_detail_url(paper)
+        scholar_url = scholar_search_url(paper.get("자료명/저자사항", ""))
+        paper_links = st.columns(2)
+        with paper_links[0]:
+            if detail_url:
+                st.link_button("📖 국회도서관 상세·원문 확인", detail_url, use_container_width=True)
+            else:
+                st.caption("이 자료는 국회도서관 관리번호가 없어 상세페이지 직접 연결이 어렵습니다.")
+        with paper_links[1]:
+            if scholar_url:
+                st.link_button("🔎 Google Scholar에서 공개본 검색", scholar_url, use_container_width=True)
+        st.caption("상세정보에서 '원문보기' 제공 여부를 확인하세요. 이용 제한 자료는 로그인/기관 방문이 필요할 수 있습니다.")
         with st.expander("자동 생성 참고문헌(임시) 확인"):
             st.write(make_reference(paper))
             st.caption("원본 서지정보에 없는 DOI/쪽수/학술지 정보는 생성하지 않습니다.")
@@ -425,8 +525,79 @@ with trends_tab:
         duplicates = filtered.duplicated(subset=["controlno"] if "controlno" in filtered else None).sum()
         st.metric("자료 중복 건수", f"{duplicates}건")
 
+with riss_tab:
+    st.subheader("4. RISS 종합목록 · 서지 구축 현황")
+    st.caption("출처: 한국교육학술정보원_RISS 종합목록 · 개별 논문 제목이나 초록을 제공하는 API가 아닙니다.")
+    st.markdown(f"[공공데이터포털 원본 데이터]({RISS_SOURCE_URL})")
+    notice = st.session_state.get("riss_notice")
+    if notice:
+        kind, message = notice
+        if kind == "success":
+            st.success(message)
+        else:
+            st.error(message)
+
+    stats_df = st.session_state.get("riss_df")
+    if isinstance(stats_df, pd.DataFrame) and not stats_df.empty:
+        st.caption("※ API의 전체 건수가 아닌 실제 가져온 기관·연도 기록만 대상으로 집계합니다.")
+        overall, raw_yearly, raw_by_org = (
+            len(stats_df), *summarize_riss(stats_df)
+        )
+        a, b, c = st.columns(3)
+        a.metric("API 전체 기록", f"{st.session_state.get('riss_total', 0):,}건")
+        b.metric("현재 수집한 기록", f"{overall:,}건")
+        c.metric("조회된 조사년도", f"{stats_df['조사년도'].replace('', pd.NA).nunique():,}개")
+
+        valid_years = sorted([x for x in stats_df["조사년도"].unique() if str(x).strip()], reverse=True)
+        year_options = ["전체 조사년도"] + valid_years
+        chosen_year = st.selectbox(
+            "기관별 순위를 볼 조사년도", year_options,
+            index=1 if len(year_options) > 1 else 0,
+            help="기관별 구축건수는 연도별로 볼 때 해석하기 쉽습니다. 전체 연도를 합하면 반복 집계될 수 있습니다.",
+        )
+        selected_riss = (stats_df[stats_df["조사년도"] == chosen_year]
+                         if chosen_year != "전체 조사년도" else stats_df)
+        _, ranked = summarize_riss(selected_riss)
+        st.markdown("**조사년도별 국내·국외 구축 건수 (현재 수집 범위)**")
+        if not raw_yearly.empty:
+            graph = raw_yearly.set_index("조사년도")[["국내 구축건수", "국외 구축건수"]].fillna(0)
+            st.bar_chart(graph, use_container_width=True)
+            st.dataframe(raw_yearly, hide_index=True, use_container_width=True)
+        st.markdown("**기관코드별 구축 건수 상위 15개**")
+        if not ranked.empty:
+            st.dataframe(ranked.head(15), hide_index=True, use_container_width=True)
+        st.markdown("**원본 기관·연도 기록**")
+        st.dataframe(selected_riss, hide_index=True, use_container_width=True)
+        st.caption(
+            "서지 구축건수는 논문 수가 아닙니다. 자료가 누적 지표일 수 있으므로 "
+            "여러 연도를 단순 합산한 값을 신규 구축량으로 해석하면 안 됩니다. "
+            "기관코드에 해당하는 기관명은 이 API만으로 식별되지 않을 수 있습니다."
+        )
+        st.markdown("**자료 품질 확인**")
+        missing_count = stats_df.isna().sum().rename("결측 건수")
+        st.dataframe(missing_count, use_container_width=True)
+        st.metric("동일한 원본 행의 중복 건수", f"{stats_df.duplicated().sum():,}건")
+        try:
+            report = make_riss_excel(stats_df, raw_yearly, raw_by_org)
+            st.download_button(
+                "📥 RISS 서지통계 Excel 다운로드", report,
+                file_name="RISS_기관별서지구축_분석.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.error(f"엑셀 파일 생성 실패 ({type(exc).__name__})")
+    else:
+        st.info("왼쪽 사이드바의 'RISS 서지 구축 통계'에서 불러오기를 실행하세요.")
+        if not riss_api_endpoint():
+            st.warning(
+                "RISS_API_URL 미설정: 공공데이터포털의 승인된 RISS 종합목록 Swagger에서 "
+                "GET 요청의 전체 주소(uddi 포함)를 복사하여 운영자가 등록해야 합니다."
+            )
+        st.caption("RISS 통계는 논문 검색·AI 요약·참고문헌 생성에 섞이지 않습니다.")
+
 with submit_tab:
-    st.subheader("4. 과제 보고서 다운로드")
+    st.subheader("5. 과제 보고서 다운로드")
     st.caption("과제 표지의 학교·교과목·제출자 정보는 왼쪽 '과제 표지 정보'를 펼쳐 입력하세요.")
     preview = pd.DataFrame([
         {"항목": "학교 / 전공", "입력 내용": " / ".join(filter(None, [school, department])) or "미입력"},
@@ -499,12 +670,13 @@ with help_tab:
     st.markdown("""
 **화면 구성**
 - 왼쪽 사이드바: 연구 주제 검색, 검색조건·자료유형 필터, 개인 AI 키, 과제 표지 입력
-- 오른쪽 메인: 검색 결과, AI 논문 요약, 연구 동향 차트, PDF·Excel 다운로드
+- 오른쪽 메인: 검색 결과, AI 논문 요약, 연구 동향, RISS 서지 구축 통계, PDF·Excel 다운로드
 
 **기능 구성**
 - 국회도서관 API 논문 검색: 별도 비용 없는 공공데이터 API, 관리자 키 사용
 - 자료 통계: 검색 결과 내 발행연도와 유형의 빈도 분석
 - AI 요약: 사용자가 붙여넣은 초록 또는 직접 업로드한 PDF 텍스트를 근거로 6개 항목 요약
+- RISS 종합목록: 기관코드·조사년도별 국내/국외 서지 구축 현황 및 Excel 다운로드 (논문 검색 기능 아님)
 - 과제 제출: 학교·전공·이름·과목 표지, PDF 보고서, Excel 통계 및 참고문헌
 
 **주의 사항**
@@ -515,5 +687,5 @@ with help_tab:
 - 표에 표시된 논문 제목/저자사항은 결합 필드이고 참고문헌은 임시 표기입니다. 정식 참고문헌 양식은 원문 확인 후 수정해야 합니다.
 - 공개 접속 주소를 아는 누구나 이용할 수 있습니다. 회원별 사용기록·개인 계정 기능은 구현하지 않았습니다.
 """)
-    st.markdown(f"**데이터 출처:** [{API_NAME}]({SOURCE_URL})")
+    st.markdown(f"**데이터 출처:** [{API_NAME}]({SOURCE_URL}) · [{RISS_NAME}]({RISS_SOURCE_URL})")
     st.caption("국회도서관 API 요청형식: /basic?serviceKey=...&pageno=1&displaylines=10&search=전체,키워드")

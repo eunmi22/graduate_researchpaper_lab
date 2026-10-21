@@ -1,6 +1,6 @@
 # 대학원 AI 논문 연구 도우미
 
-> 국회도서관 자료검색 API + Streamlit + pandas + 개인 OpenAI API 키 기반 연구/과제 도우미
+> 국회도서관 자료검색 API + RISS 종합목록 통계 API + Streamlit + pandas + 개인 OpenAI API 키 기반 연구/과제 도우미
 
 ## 먼저 알아두기
 
@@ -20,6 +20,7 @@
 | 4. 보고서 | 표지 포함 PDF + 6개 시트 Excel + 텍스트 요약 |
 | 5. 참고문헌 | 검색 결과의 서지정보를 이용한 **임시** 참고문헌 목록 |
 | 6. 표지 | 학교, 대학원/전공, 교과목, 교수, 성명, 제출일 |
+| 8. RISS 서지 구축 통계 | 기관·조사년도별 국내/국외 MARC 구축 건수, 차트, Excel (개별 논문 검색 아님) |
 | 7. 파일 업로드 | 텍스트 기반 PDF(15MB 이하, 최대 30페이지) 및 초록 붙여넣기, 직접 업로드 분석 |
 
 > API 문서가 보장하는 것은 도서·학위논문·국내외 기사 **목록 서지정보**입니다. 초록·본문을 자동으로 반환하는 API가 아닙니다. 제목만 입력하면 AI가 요약을 만들지 않도록 막았습니다. 스캔 PDF의 OCR은 지원하지 않습니다.
@@ -30,6 +31,7 @@
 graduate_paper_lab/
 ├─ app.py                         # Streamlit 메인 화면
 ├─ paperlab.py                    # 국회도서관 XML·데이터 분석·OpenAI 처리
+├─ riss_catalog.py                # RISS 종합목록 기관별 구축통계 JSON 처리
 ├─ reporting.py                   # PDF·Excel 보고서
 ├─ requirements.txt               # pip 설치 대상
 ├─ packages.txt                   # Cloud에서 PDF 한글 글꼴 설치
@@ -38,7 +40,9 @@ graduate_paper_lab/
 │  └─ secrets.example.toml        # 배포용 비밀 값 형식(실제 키 없음)
 ├─ .env.example                   # 로컬 환경변수 예시(실제 키 없음)
 ├─ .gitignore                     # 실제 비밀 키 추적 금지
-├─ API_실습_검증.ipynb             # 수업 제출용 Jupyter 실습 노트북
+├─ API_실습_검증.ipynb             # 수업 제출용 국회도서관 노트북
+├─ RISS_API_실습_검증.ipynb        # RISS 검증용 주피터 노트북
+├─ RISS_추가기능_안내.md           # RISS 추가 설정 및 이용 안내
 └─ tests/test_paperlab.py         # API 없이 검사 가능한 단위 테스트
 ```
 
@@ -47,6 +51,7 @@ graduate_paper_lab/
 | 왼쪽 사이드바: 입력/설정 | 오른쪽 메인화면: 검색 결과/다운로드 |
 |---|---|
 | 논문 주제 검색어, 검색 대상, 자동 재검색, 검색 페이지 수/건수, 검색 실행 버튼 | **검색 결과** 탭: 논문 목록, 원 검색어·재검색어, API 건수, 오류 진단 |
+| RISS 통계 페이지 수 및 불러오기(별도 접이식) | **RISS 서지통계** 탭: 기관별·조사년도별 국내/국외 MARC 구축 건수, 통계·Excel |
 | 검색된 자료 유형 필터 | **논문 AI 요약** 탭: 논문 선택, 초록/PDF 첨부, 6개 항목 요약 |
 | 원우 개인 OpenAI API 키, AI 모델 | **연구 동향** 탭: 발행연도/자료유형 차트와 결측·중복 |
 | 접이식 **과제 표지 정보**: 학교, 전공, 과목, 제출자, 교수, 날짜 | **과제 보고서** 탭: 표지 미리보기, PDF/Excel 다운로드 |
@@ -193,3 +198,42 @@ python -m compileall app.py paperlab.py reporting.py
 > 주의: 데이터 263건은 API 전체 검색 건수이고, 20건은 현재 요청으로 수집한 자료 건수입니다.
 > 국회도서관 자료검색 서비스는 도서와 기사도 검색합니다. 모든 결과가 학술 논문이라는 뜻은 아닙니다.
 > 실시간 API 응답은 이 오프라인 테스트에서 검증되지 않았습니다.
+
+
+## 5. 신규 RISS 종합목록 API 연결 (v1.5)
+
+**중요:** RISS 종합목록은 기관별 MARC 서지 구축현황 통계이므로 **논문명·초록 검색 API가 아닙니다.** 기존 국회도서관 논문 검색과 별도의 탭으로 제공됩니다.
+
+공공데이터포털의 Swagger에서 RISS 종합목록 `GET /...` 전체 경로를 확인하고, `.env` 또는 Cloud Secrets에 **`RISS_API_URL`**을 추가해야 합니다.
+
+```toml
+DATA_GO_KR_API_KEY = "발급받은_공공데이터포털_인증키"
+RISS_API_URL = "https://api.odcloud.kr/api/<실제서비스번호>/v1/uddi:<실제UUID>"
+```
+
+경로는 **설명용 형식**입니다. Swagger에 표시된 값으로 교체하세요. 인증키가 서로 다르면 `RISS_API_KEY`도 설정할 수 있습니다. 자세한 과정과 주의사항은 `RISS_추가기능_안내.md`를 참고하세요.
+
+- 오프라인 검증: `python -m pytest -q tests/test_riss_catalog.py`
+- 별도 실습: `RISS_API_실습_검증.ipynb`
+- 새 화면: 왼쪽 `RISS 서지 구축 통계` 설정 → 오른쪽 `RISS 서지통계` 결과·Excel
+
+
+## v1.6 - 국회도서관 상세정보 및 원문 확인 기능 (2026-10-21)
+
+- **논문 검색 탭:** 논문 제목 옆 **「📖 상세·원문 확인」** 링크를 누르면 국회도서관의 개별 자료 상세페이지로 이동합니다.
+- **논문 AI 요약 탭:** 선택 논문에 대해 `📖 국회도서관 상세·원문 확인` 버튼과 `🔎 Google Scholar에서 공개본 검색` 버튼을 제공합니다.
+- 구버전에서 `controlno`가 비고 별도 `제어번호` 필드에 코드가 들어가는 문제를 수정했습니다. `제어번호`를 `controlno`로 통일합니다.
+- 검색 API의 응답에 PDF URL이 없으므로 직접 PDF를 다운로드하거나 이용 제한을 우회하는 기능은 없습니다.
+- 국회도서관 검색결과에서 「원문보기」가 비활성화된 자료는 현장/협정기관 열람이 필요할 수 있습니다. 열람 가능한 PDF를 이용자가 합법적으로 확보하면 AI 요약 탭에 업로드합니다.
+- 국회도서관 공식 이용 안내: https://www.nanet.go.kr/usermadang/etc/infoUseReqView.do
+- 국회도서관 FAQ: https://nanet.go.kr/libaryuseinfo/faqServiceList.do
+- Streamlit `LinkColumn` 개발 문서: https://docs.streamlit.io/develop/api-reference/data/st.column_config/st.column_config.linkcolumn
+
+### 이 버전에서 교체해야 할 파일
+
+`app.py`, `paperlab.py`를 **같이 교체**하십시오. 기존 `riss_catalog.py`, `reporting.py` 및 RISS 통계 탭 기능은 변경하지 않았습니다.
+GitHub에서 배포한 앱의 코드를 변경한 경우 연결된 Streamlit Community Cloud 앱을 새로고침하세요.
+
+### 검증
+
+`python -m pytest tests -q` (오프라인 단위 테스트). 실제 국회도서관 원문 열람 권한은 이용자의 계정/저작권 상태에 따라 달라지므로 자동 검증되지 않습니다.

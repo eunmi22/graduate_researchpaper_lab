@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import html
 import re
 from collections import Counter
 from io import BytesIO
-from urllib.parse import unquote
+from urllib.parse import unquote, quote, quote_plus
 from xml.etree import ElementTree as ET
 
 import fitz
@@ -105,6 +106,7 @@ def _canonical_field_name(field_name: str) -> str:
     simple = re.sub(r"[\s_\-\./／:()（）]+", "", raw).lower()
     aliases = {
         "controlno": "controlno", "controlnumber": "controlno",
+        "제어번호": "controlno", "관리번호": "controlno",
         "db": "DB", "dbname": "DB", "database": "DB",
         "자료유형": "DB", "자료구분": "DB",
         "자료명저자사항": "자료명/저자사항",
@@ -322,6 +324,59 @@ def calculate_trends(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
                .value_counts().rename_axis("자료유형").reset_index(name="건수"))
     return year_df.reset_index(drop=True), type_df.reset_index(drop=True)
 
+
+
+# 국회도서관의 실사용 상세페이지 주소는 관리번호(controlNo)를 받습니다.
+# 이 링크는 도서관의 상세정보 페이지로 이동합니다. PDF 공개를 보장하지 않습니다.
+NANET_DETAIL_BASE = "https://dl.nanet.go.kr/search/searchInnerDetail.do"
+
+
+def nanet_detail_url(record_or_number) -> str:
+    """검증된 관리번호만 이용해 국회도서관 공식 상세정보 링크 생성.
+
+    국회도서관 응답에는 'controlno' 대신 '제어번호'가 들어오기도 합니다.
+    악의적인 링크 삽입을 막기 위해 주소의 도메인은 고정합니다.
+    """
+    if isinstance(record_or_number, dict):
+        raw = record_or_number.get("controlno") or record_or_number.get("제어번호") or ""
+    else:
+        raw = record_or_number
+    if raw is None:
+        return ""
+    for candidate in str(raw).split(";"):
+        number = candidate.strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]{4,80}", number):
+            return f"{NANET_DETAIL_BASE}?controlNo={quote(number, safe='')}"
+    return ""
+
+
+def clean_paper_title(title: str) -> str:
+    """검색 결과에 포함된 <font> 하이라이트 태그 제거 후 제목 표시."""
+    source = html.unescape(str(title or ""))
+    return re.sub(r"<[^>]*>", "", source).strip()
+
+
+def scholar_search_url(title: str) -> str:
+    """제목으로 Google Scholar에서 공개된 사본을 찾는 검색 페이지 주소."""
+    plain = clean_paper_title(title)
+    # 국회도서관 서지 텍스트는 제목 / 저자 또는 제목 = 번역제목 형식일 수 있음.
+    query = re.split(r"\s+/\s+|\s+=\s+", plain, maxsplit=1)[0].strip()
+    if len(query) < 3:
+        return ""
+    return "https://scholar.google.com/scholar?q=" + quote_plus(query[:300])
+
+
+def add_access_links(df: pd.DataFrame) -> pd.DataFrame:
+    """UI용 사본에 공식 상세 링크 및 공개본 검색 링크만 추가. 원본 불변."""
+    result = df.copy()
+    detail = [nanet_detail_url(row) for row in result.to_dict("records")]
+    scholar = [scholar_search_url(row.get("자료명/저자사항", ""))
+               for row in result.to_dict("records")]
+    result.insert(1, "국회도서관 상세·원문 확인", detail)
+    result.insert(2, "공개본 검색", scholar)
+    if "자료명/저자사항" in result.columns:
+        result["자료명/저자사항"] = result["자료명/저자사항"].map(clean_paper_title)
+    return result
 
 def make_reference(row: dict) -> str:
     """정식 APA 아님. 서지 필드 기반 임시 참고문헌 문자열."""
