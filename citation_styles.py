@@ -17,11 +17,11 @@ UNKNOWN = "자료유형 확인 필요"
 REFERENCE_TYPES = (JOURNAL, THESIS, REPORT)
 
 REFERENCE_TEMPLATES = {
-    JOURNAL: '[저자], “[논문 제목],” [학술지명], [권], [호], [수록 페이지], [발행 연월]. DOI: [식별번호].',
-    THESIS: '[저자], “[논문 제목],” [석사학위논문 또는 박사학위논문], [학위수여 대학·대학원], [학위수여 연월].',
-    REPORT: '[저자 또는 기관명], “[보고서 제목],” [발행기관], [보고서 번호], [발행 연월]. [DOI 또는 URL].',
+    JOURNAL: '[저자], “[논문 제목]”, [학술지명], [권], [호], [수록 페이지], [발행 연월]. DOI: [식별번호].',
+    THESIS: '[저자], “[논문 제목]”, [석사학위논문 또는 박사학위논문], [학위수여 대학·대학원], [학위수여 연월].',
+    REPORT: '[저자 또는 기관명], “[보고서 제목]”, [발행기관], [보고서 번호], [발행 연월]. [DOI 또는 URL].',
 }
-THESIS_EXAMPLE = '김수용, “Amazon RDS 데이터베이스 디지털포렌식 조사 기법 연구,” 석사학위논문, 고려대학교 대학원, 2026년 8월.'
+THESIS_EXAMPLE = '김수용, “Amazon RDS 데이터베이스 디지털포렌식 조사 기법 연구”, 석사학위논문, 고려대학교 대학원, 2026년 8월.'
 
 
 def _text(value: object) -> str:
@@ -132,18 +132,18 @@ def format_reference(record: Mapping) -> str:
         issue = field("issue", "호")
         pages = field("pages", "수록 페이지")
         doi = field("doi", "DOI")
-        return f'{author}, “{title},” {journal}, {volume}, {issue}, {pages}, {date_value}. DOI: {doi}.'
+        return f'{author}, “{title}”, {journal}, {volume}, {issue}, {pages}, {date_value}. DOI: {doi}.'
     if kind == THESIS:
         degree = field("degree", "학위종류")
         university = field("university", "학위수여 대학·대학원")
-        return f'{author}, “{title},” {degree}, {university}, {date_value}.'
+        return f'{author}, “{title}”, {degree}, {university}, {date_value}.'
     if kind == REPORT:
         publisher = field("publisher", "발행기관")
         number = field("report_number", "보고서 번호")
         location = _first(record, "doi") or _first(record, "url") or "[DOI/URL 미확인]"
-        return f'{author}, “{title},” {publisher}, {number}, {date_value}. {location}.'
+        return f'{author}, “{title}”, {publisher}, {number}, {date_value}. {location}.'
     return (
-        f'[자료유형 미확인] {author}, “{title},” {date_value}. '
+        f'[자료유형 미확인] {author}, “{title}”, {date_value}. '
         '학술지 논문·학위논문·기관 연구보고서 중 올바른 유형을 선택해야 합니다.'
     )
 
