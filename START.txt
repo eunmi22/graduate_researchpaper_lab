@@ -1,0 +1,14 @@
+v2.3.1 Windows 압축 풀기/실행 안내
+
+1. C: 드라이브에 AI 폴더를 만듭니다: C:\AI
+2. paper_v231.zip 파일을 C:\AI로 이동합니다.
+3. ZIP 오른쪽 클릭 -> 모두 압축 풀기 -> 대상 폴더: C:\AI\paper
+4. 압축 해제 후 C:\AI\paper\app.py 가 있는지 확인합니다.
+5. Anaconda Prompt에서 실행:
+
+cd /d C:\AI\paper
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+
+주의: 기존 ZIP과 소스 내용은 동일하며 ZIP 내부의 불필요한 상위 graduate_paper_lab 폴더만 제거했습니다.
+보안: .env 실제 키나 .streamlit/secrets.toml 실제 키는 배포 ZIP에 포함되지 않았습니다.

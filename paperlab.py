@@ -19,6 +19,9 @@ except ImportError:  # 무료 검색·오프라인 실습은 SDK 설치 없이�
     OpenAI = None
 
 API_BASE_URL = "https://apis.data.go.kr/9720000/searchservice/basic"
+API_DETAIL_URL = "https://apis.data.go.kr/9720000/searchservice/detail"
+# 국회도서관 공식 상세검색의 dbname은 한 번에 한 자료유형을 받습니다.
+PAPER_DB_NAMES = ("국내학술기사", "학위논문", "국외학술기사")
 SOURCE_URL = "https://www.data.go.kr/"
 API_NAME = "국회 국회도서관_자료검색 서비스"
 SUMMARY_FIELDS = ["주제", "목적", "다룬기술", "활용분야", "주요한계", "발전방향"]
@@ -112,12 +115,19 @@ def _canonical_field_name(field_name: str) -> str:
         "제어번호": "controlno", "관리번호": "controlno",
         "db": "DB", "dbname": "DB", "database": "DB",
         "자료유형": "DB", "자료구분": "DB",
-        "자료명저자사항": "자료명/저자사항",
+        "자료명저자사항": "자료명/저자사항", "자료명저자": "자료명/저자사항",
+        "자료명저자명": "자료명/저자사항", "자료명및저자사항": "자료명/저자사항",
+        "제목저자사항": "자료명/저자사항", "제목저자": "자료명/저자사항",
+        "자료명저자정보": "자료명/저자사항", "자료명저자표시": "자료명/저자사항",
+        "titleandauthor": "자료명/저자사항", "titleauthors": "자료명/저자사항",
         "자료명저자": "자료명/저자사항", "자료명": "자료명/저자사항",
         "서명": "자료명/저자사항", "논문명": "자료명/저자사항",
         "논문제목": "자료명/저자사항", "title": "자료명/저자사항",
         "titleauthor": "자료명/저자사항", "titlename": "자료명/저자사항",
         "발행자": "발행자", "publisher": "발행자",
+        "발행처": "발행자", "발행기관": "발행자",
+        "저자명": "저자", "저자사항": "저자", "author": "저자",
+        "수록지명": "수록지명", "학술지명": "수록지명", "journal": "수록지명",
         "발행년": "발행년", "발행년도": "발행년",
         "year": "발행년", "pubyear": "발행년", "publicationyear": "발행년",
     }
@@ -240,7 +250,8 @@ def search_candidates(keyword: str, automatic_retry: bool = True) -> list[str]:
 
 def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10,
                   session=None, search_field: str = "전체",
-                  diagnostics: list[dict] | None = None) -> tuple[int, pd.DataFrame]:
+                  diagnostics: list[dict] | None = None,
+                  db_name: str | None = None) -> tuple[int, pd.DataFrame]:
     """공식 basic 검색. 문서 규정: serviceKey/pageno/displaylines/search 필수."""
     key = normalize_key(api_key)
     keyword = (keyword or "").strip()
@@ -250,6 +261,8 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
         raise ValueError("검색 대상은 전체/자료명/키워드 중에서 선택하세요.")
     if not (1 <= pages <= 5 and 1 <= per_page <= 20):
         raise ValueError("검색 페이지는 1~5, 페이지당 결과는 1~20으로 제한합니다.")
+    if db_name is not None and db_name not in PAPER_DB_NAMES:
+        raise ValueError("지정할 수 없는 논문 자료유형입니다.")
     client = session if session is not None else requests
     all_rows = []
     full_total = 0
@@ -258,8 +271,12 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
             "serviceKey": key, "pageno": page,
             "displaylines": per_page, "search": f"{search_field},{keyword}",
         }
+        if db_name:
+            # /basic은 일반도서까지 섞임. 문서화된 /detail 의 dbname으로 서버에서 먼저 거릅니다.
+            params["dbname"] = db_name
+        endpoint = API_DETAIL_URL if db_name else API_BASE_URL
         try:
-            response = client.get(API_BASE_URL, params=params, timeout=(6, 25))
+            response = client.get(endpoint, params=params, timeout=(6, 25))
             # HTTP 400 시에도 XML 오류코드를 우선 보여주기 위해 상태검사 이전에 파싱
             # 검색 요청 및 응답 본문 대신 태그명·건수만 진단 자료에 남김.
             xml_shape = describe_xml_structure(response.content)
@@ -268,6 +285,7 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
             if diagnostics is not None:
                 diagnostics.append({
                     "페이지": page,
+                    "자료유형 요청": db_name or "통합검색",
                     "HTTP": response.status_code,
                     "API 전체 건수": total,
                     "변환된 자료 수": len(rows),
@@ -301,9 +319,50 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
                 df[column] = ""
         ordered = DISPLAY_COLUMNS + [c for c in df.columns if c not in DISPLAY_COLUMNS]
         df = df[ordered].fillna("")
-        # 실제 API가 DB(자료유형)를 보내지 않더라도 자료를 숨기지 않도록 표시값 부여.
-        df["DB"] = df["DB"].astype(str).str.strip().replace("", "미분류")
+        # 상세검색은 서버에서 한 DB를 선택하므로 DB 필드가 누락된 경우 요청 유형을 기록합니다.
+        # 통합검색 응답의 유형 누락은 추측하지 않고 '미분류'로 둡니다.
+        df["DB"] = df["DB"].astype(str).str.strip().replace("", db_name or "미분류")
     return full_total, df.reset_index(drop=True)
+
+
+
+def classify_catalog_record(row: dict) -> str:
+    """서지 DB 명칭에 근거해 학술기사/학위논문/기타/미확인으로 분류.
+
+    도서관 서비스가 제공하는 '일반도서'를 연구 논문으로 오인하지 않습니다.
+    국내기사는 잡지·신문도 포함할 수 있으므로 학술지 수록 정보가 있어야 인정합니다.
+    """
+    kind = clean_paper_title(row.get("DB", "")).lower().replace(" ", "")
+    journal = clean_paper_title(row.get("수록지명", "") or row.get("학술지명", ""))
+    if any(w in kind for w in ("일반도서", "아동도서", "어린이도서", "단행본",
+                              "전자책", "정기간행물", "신문", "잡지", "멀티미디어",
+                              "웹db", "학술행사", "학술대회프로그램")):
+        return "기타자료"
+    if any(w in kind for w in ("학위논문", "석사학위", "박사학위", "dissertation", "thesis")):
+        return "학위논문"
+    if any(w in kind for w in ("국내학술기사", "국외학술기사", "학술논문", "학회논문",
+                              "학술지", "저널논문", "journalarticle")):
+        return "학술논문"
+    if kind in ("국내기사", "국외기사", "학술기사", "기사"):
+        return "학술논문" if journal and any(x in journal.lower() for x in ("권", "호", "논문", "학술", "journal", "vol.")) else "미확인"
+    return "미확인"
+
+
+def filter_paper_records(df: pd.DataFrame, show_unclassified: bool = False) -> pd.DataFrame:
+    """학생 대상 논문검색에서 도서·아동 자료를 배제. 원본 df는 유지."""
+    if df.empty:
+        return df.copy()
+    classes = df.apply(lambda row: classify_catalog_record(row.to_dict()), axis=1)
+    permitted = {"학술논문", "학위논문"}
+    if show_unclassified:
+        permitted.add("미확인")
+    return df[classes.isin(permitted)].copy().reset_index(drop=True)
+
+
+def missing_title_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "자료명/저자사항" not in df:
+        return df.iloc[0:0].copy()
+    return df[df["자료명/저자사항"].map(lambda t: not clean_paper_title(t))].copy()
 
 
 def select_type(df: pd.DataFrame, accepted_types: list[str]) -> pd.DataFrame:

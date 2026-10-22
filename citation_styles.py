@@ -46,6 +46,43 @@ def _first(row: Mapping, *keys: str) -> str:
     return ""
 
 
+
+def _parse_bibliographic_date(*statements: str) -> str:
+    """발행사항에 실제 기재된 연월일만 표준 한글 날짜로 변환."""
+    for source in statements:
+        # '서울 : 학회, 2026. 4. 30' / '제2호 (2026년 4월)' 두 형식 지원.
+        matched = re.search(
+            r"(?<!\d)((?:19|20)\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})"
+            r"\s*(?:월|[.\-/])?\s*(\d{1,2})?\s*(?:일)?",
+            source or "",
+        )
+        if matched:
+            y, m, d = matched.groups()
+            if 1 <= int(m) <= 12 and (not d or 1 <= int(d) <= 31):
+                return f"{y}년 {int(m)}월" + (f" {int(d)}일" if d else "")
+    return ""
+
+
+def _parse_journal_details(raw: str) -> dict[str, str]:
+    """수록지명에 직접 적힌 학술지·권·호·쪽수만 구조화, 추측 금지."""
+    raw = _text(raw)
+    result = {"journal": "", "volume": "", "issue": "", "pages": ""}
+    if not raw:
+        return result
+    volume = re.search(r"제?\s*(\d+)\s*권", raw)
+    issue = re.search(r"제?\s*(\d+)\s*호", raw)
+    pages = re.search(r"(?:pp?\.?|p\.|페이지)\s*(\d+\s*[-–~]\s*\d+)", raw, re.I)
+    prefix = re.split(r"제?\s*\d+\s*(?:권|호)|\(\s*(?:19|20)\d{2}", raw, maxsplit=1)[0]
+    journal = prefix.split("=")[0].strip(" .,;:")
+    result["journal"] = journal or raw
+    if volume:
+        result["volume"] = f"제{volume.group(1)}권"
+    if issue:
+        result["issue"] = f"제{issue.group(1)}호"
+    if pages:
+        result["pages"] = re.sub(r"\s+", "", pages.group(1)).replace("~", "-") + "쪽"
+    return result
+
 def guess_reference_type(row: Mapping) -> str:
     """자료유형을 명시적 서지 분류로만 판단; 모호하면 미확인 유지."""
     kind = _first(row, "자료유형", "DB", "document_type").lower()
@@ -55,6 +92,11 @@ def guess_reference_type(row: Mapping) -> str:
         return JOURNAL
     if any(token in kind for token in ("연구보고서", "기관보고서", "research report")):
         return REPORT
+    # 단순 국내기사·국외기사는 학술지 수록정보가 있어야 학술논문으로 인정.
+    if kind in ("국내기사", "국외기사", "기사"):
+        journal = _first(row, "수록지명", "학술지명")
+        if any(token in journal.lower() for token in ("논문", "학술", "journal", "권", "호")):
+            return JOURNAL
     return UNKNOWN
 
 
@@ -73,10 +115,16 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
     title, author_from_combined = _parse_combined_title_and_author(combined)
     year = _first(row, "발행년", "발행연도", "year")
     date_value = _first(row, "발행 연월", "발행연월", "학위수여 연월", "date")
+    if not date_value:
+        date_value = _parse_bibliographic_date(
+            _first(row, "발행자", "발행사항", "publisher"),
+            _first(row, "수록지명", "학술지명", "journal"),
+        )
     if not date_value and year:
         year_match = re.fullmatch(r"(19\d{2}|20\d{2})", year)
         date_value = f"{year}년 (월 미확인)" if year_match else year
     kind = guess_reference_type(row)
+    journal_data = _parse_journal_details(_first(row, "수록지명", "학술지명", "journal"))
     degree = _first(row, "학위종류", "degree_type")
     if not degree:
         raw_type = _first(row, "DB", "자료유형")
@@ -89,10 +137,10 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
         "author": _first(row, "저자", "저자명", "author") or author_from_combined,
         "title": title,
         "publication_date": date_value,
-        "journal": _first(row, "학술지명", "수록지명", "journal"),
-        "volume": _first(row, "권", "volume"),
-        "issue": _first(row, "호", "issue"),
-        "pages": _first(row, "수록 페이지", "페이지", "pages"),
+        "journal": _first(row, "학술지명", "journal") or journal_data["journal"],
+        "volume": _first(row, "권", "volume") or journal_data["volume"],
+        "issue": _first(row, "호", "issue") or journal_data["issue"],
+        "pages": _first(row, "수록 페이지", "페이지", "pages") or journal_data["pages"],
         "doi": _first(row, "DOI", "doi"),
         "degree": degree,
         "university": _first(row, "학위수여 대학·대학원", "학위수여기관", "수여대학", "university"),

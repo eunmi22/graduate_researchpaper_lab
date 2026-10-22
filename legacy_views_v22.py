@@ -23,6 +23,7 @@ from paperlab import (
     API_NAME, SOURCE_URL, PaperAPIError, calculate_trends, extract_pdf_text,
     add_access_links, clean_paper_title, nanet_detail_url,
     scholar_search_url, prepare_evidence, search_candidates, search_papers, select_type,
+    filter_paper_records, missing_title_rows, PAPER_DB_NAMES, clean_paper_title,
     summarize_paper, summary_lines,
 )
 from dcollection_fallback import (
@@ -45,6 +46,7 @@ from citation_styles import (
     THESIS_EXAMPLE, suggested_citation, complete_citation, format_reference,
     missing_citation_fields,
 )
+from nanet_detail import fetch_nanet_detail_metadata, MetadataLookupError
 from riss_catalog import (
     RISS_NAME, RISS_SOURCE_URL, RissCatalogError,
     fetch_riss_catalog, summarize_riss, make_riss_excel,
@@ -181,29 +183,34 @@ def edit_citation(paper: dict) -> dict[str, str]:
 
 
 def render_search_controls():
-    st.header("🔎 논문 주제 검색")
+    """국회도서관 전용 검색. 다른 학교/기관 검색 UI는 이 화면에 나타나지 않음."""
+    st.subheader("🔎 국회도서관 학술논문·학위논문 검색")
     admin_key = admin_api_key()
     if admin_key:
-        st.caption("✅ 국회도서관 API 키 읽기 완료 (실제 연결은 검색 시 확인)")
+        st.caption("국회도서관 API 키 읽기 완료 (실제 검색 결과는 버튼을 눌러 확인)")
     else:
-        st.warning("관리자 API 키가 없어 검색할 수 없습니다. PDF 직접 분석은 가능합니다.")
+        st.warning("관리자 API 키가 없어 검색할 수 없습니다. 기존 PDF 분석 기능은 이용 가능합니다.")
 
-    # 검색 조건은 사이드바, 실제 검색 상태와 결과는 오른쪽에 표시.
+    # 공식 'detail' 엔드포인트의 dbname을 이용하여 도서류를 검색 단계부터 제외합니다.
+    source_groups = {
+        "국내 학술논문 + 학위논문": ("국내학술기사", "학위논문"),
+        "국내 학술논문": ("국내학술기사",),
+        "국외 학술논문": ("국외학술기사",),
+        "학위논문": ("학위논문",),
+    }
     with st.form("search_form", clear_on_submit=False):
         keyword = st.text_input(
-            "검색할 논문 주제",
-            value=st.session_state.get("search_keyword", "데이터베이스 포렌식"),
+            "검색할 논문 주제", value=st.session_state.get("search_keyword", "데이터베이스 포렌식"),
             placeholder="예: 데이터베이스 포렌식",
         )
-        search_field = st.selectbox(
-            "검색 대상", ["전체", "자료명", "키워드"], index=0,
-            help="국회도서관 자료검색 API의 공식 검색항목입니다.",
-        )
+        selected_group = st.selectbox("검색 논문 유형", list(source_groups), index=0,
+                 help="국회도서관 공식 상세검색에서 학술기사 또는 학위논문만 요청합니다. 일반도서는 제외합니다.")
+        search_field = st.selectbox("검색 대상", ["전체", "자료명", "키워드"], index=0)
         pages = st.selectbox("검색 페이지 수", [1, 2, 3, 4, 5], index=1)
         per_page = st.selectbox("페이지당 검색 건수", [5, 10, 15, 20], index=1)
         automatic_retry = st.checkbox(
-            "검색 결과가 0건이면 핵심 단어로 재검색", value=True,
-            help="예: '데이터베이스 포렌식'이 0건이면 '포렌식'으로 다시 검색하고 결과에 표시합니다.",
+            "결과가 0건이면 핵심 단어로 다시 검색", value=False,
+            help="재검색은 범위를 넓혀 무관한 논문이 추가될 수 있으므로 기본적으로 꺼져 있습니다.",
         )
         searched = st.form_submit_button(
             "🔎 논문 검색 실행", type="primary", use_container_width=True,
@@ -215,132 +222,158 @@ def render_search_controls():
         recent = [t for t in st.session_state.get("search_events", []) if now - t < 3600]
         st.session_state.pop("search_notice", None)
         st.session_state.search_attempts = []
-        if len(recent) >= 12:
+        chosen_dbnames = source_groups[selected_group]
+        # 실제 API 요청 수(유형 x 페이지)를 기준으로 호출량 제한합니다.
+        needed_per_attempt = len(chosen_dbnames) * pages
+        if len(recent) + needed_per_attempt > 12:
             st.session_state.search_notice = (
-                "error", "이 브라우저 세션은 1시간에 최대 12회 검색할 수 있습니다."
+                "error", "이 브라우저의 1시간 최대 검색 요청(12회) 잔여량이 부족합니다. "
+                         "검색 페이지 수를 줄이거나 나중에 다시 검색해 주세요."
             )
         else:
             try:
                 candidates = search_candidates(keyword, automatic_retry)
                 attempts = []
-                xml_diagnostics = []
+                diagnostics = []
+                errors = []
                 final_df = pd.DataFrame()
-                final_total = 0
+                total_all = 0
                 used_keyword = candidates[0]
-                with st.spinner("국회도서관 API를 검색하는 중..."):
+                request_count = 0
+                with st.spinner("국회도서관 논문 유형별 목록을 검색하는 중..."):
                     for candidate in candidates:
-                        # 실제 요청마다 호출량 계산: 자동 재검색 역시 1회로 계산.
-                        if len(recent) + len(attempts) >= 12:
+                        if len(recent) + request_count + needed_per_attempt > 12:
                             break
-                        total, result_df = search_papers(
-                            admin_key, candidate, pages=pages,
-                            per_page=per_page, search_field=search_field,
-                            diagnostics=xml_diagnostics,
-                        )
-                        attempts.append((candidate, total, len(result_df)))
-                        final_total, final_df, used_keyword = total, result_df, candidate
-                        if not result_df.empty or total > 0:
+                        partials = []
+                        candidate_total = 0
+                        succeeded_types = 0
+                        for db_name in chosen_dbnames:
+                            try:
+                                # /detail 의 dbname을 사용: 일반도서 같은 자료가 섞이지 않도록 함.
+                                total, result_df = search_papers(
+                                    admin_key, candidate, pages=pages,
+                                    per_page=per_page, search_field=search_field,
+                                    db_name=db_name, diagnostics=diagnostics,
+                                )
+                                succeeded_types += 1
+                                candidate_total += total
+                                if not result_df.empty:
+                                    partials.append(result_df)
+                            except (PaperAPIError, ValueError) as exc:
+                                errors.append(f"{db_name} 검색 실패: {exc}")
+                        request_count += needed_per_attempt
+                        # 유형별 검색 전체 실패 또는 0건이면, 남은 호출량 범위에서 기본검색 1회 복구.
+                        # 기본검색 결과 역시 반드시 학술논문/학위논문만 클라이언트 검증.
+                        if (succeeded_types == 0 or candidate_total == 0) and len(recent) + request_count < 12:
+                            try:
+                                backup_total, fallback_df = search_papers(
+                                    admin_key, candidate, pages=1, per_page=per_page,
+                                    search_field=search_field, diagnostics=diagnostics,
+                                )
+                                request_count += 1
+                                errors.append("유형별 검색 미응답/0건: 통합검색을 추가 조회해 논문 유형을 다시 검증했습니다.")
+                                if candidate_total == 0:
+                                    candidate_total = backup_total
+                                if not fallback_df.empty:
+                                    partials.append(fallback_df)
+                            except (PaperAPIError, ValueError) as exc:
+                                errors.append(f"통합검색 복구 실패: {exc}")
+                        if partials:
+                            candidate_df = pd.concat(partials, ignore_index=True)
+                            if "controlno" in candidate_df:
+                                valid_ctrl = candidate_df["controlno"].astype(str).str.strip()
+                                if valid_ctrl.ne("").all():
+                                    candidate_df = candidate_df.drop_duplicates(subset=["controlno"])
+                            candidate_df = candidate_df.reset_index(drop=True)
+                            candidate_df = filter_paper_records(candidate_df)
+                        else:
+                            candidate_df = pd.DataFrame()
+                        attempts.append((candidate, candidate_total, len(candidate_df)))
+                        final_df, total_all, used_keyword = candidate_df, candidate_total, candidate
+                        if not candidate_df.empty:
                             break
-                st.session_state.search_events = recent + [now] * len(attempts)
+                        # 검색된 총 건수는 있는데 논문 목록이 비었다면 다른 키워드 자동 확장을 방지
+                        if candidate_total > 0:
+                            break
+
+                st.session_state.search_events = recent + [now] * request_count
                 st.session_state.search_attempts = attempts
-                st.session_state.xml_diagnostics = xml_diagnostics
+                st.session_state.xml_diagnostics = diagnostics
+                st.session_state.search_errors = errors
                 st.session_state.paper_df = final_df
                 st.session_state.search_keyword = keyword.strip()
-                st.session_state.dcollection_query = keyword.strip()
                 st.session_state.search_used_keyword = used_keyword
                 st.session_state.search_field = search_field
-                st.session_state.total_count = final_total
+                st.session_state.search_group = selected_group
+                st.session_state.total_count = total_all
                 st.session_state.pop("summary_result", None)
                 st.session_state.pop("summary_context", None)
                 st.session_state.pop("selected_idx", None)
                 st.session_state.pop("sidebar_types", None)
 
                 if not final_df.empty:
-                    if used_keyword != keyword.strip():
-                        message = (
-                            f"입력 검색어 '{keyword.strip()}'는 결과가 없어 "
-                            f"'{used_keyword}'(으)로 확장 검색했습니다. "
-                            f"수집 {len(final_df):,}건 / API 전체 {final_total:,}건."
-                        )
-                    else:
-                        message = f"검색 성공: 수집 {len(final_df):,}건 / API 전체 {final_total:,}건."
-                    st.session_state.search_notice = ("success", message)
-                elif final_total > 0:
                     st.session_state.search_notice = (
-                        "error",
-                        f"API 연결과 인증은 정상이며 전체 {final_total:,}건이 검색되었습니다. "
-                        "다만 논문 목록을 읽지 못했습니다. 아래 'API 검색 진단'에서 "
-                        "XML 태그 구조를 확인해 주세요. 인증키 문제는 아닙니다.",
+                        "success", f"논문 {len(final_df):,}건 수집 / API 검색 집계 {total_all:,}건 "
+                                   f"· 검색어: {used_keyword}",
+                    )
+                elif total_all > 0:
+                    st.session_state.search_notice = (
+                        "info", "검색 결과 중 지정한 논문 유형과 확인된 항목이 없습니다. "
+                                "검색 유형이나 키워드를 바꾸거나 API 진단 항목을 확인해 주세요.",
+                    )
+                elif errors:
+                    st.session_state.search_notice = (
+                        "error", "논문 검색을 완료하지 못했습니다. 아래 API 검색 진단에서 유형별 오류를 확인하세요.",
                     )
                 else:
-                    checked = ", ".join(f"'{term}'" for term, _, _ in attempts)
                     st.session_state.search_notice = (
-                        "info", f"API 응답은 정상이나 검색 결과가 0건입니다. "
-                        f"시도한 검색어: {checked}. '자료명' 또는 다른 검색어도 시험해 보세요.",
+                        "info", "해당 논문 유형에 검색 결과가 없습니다. 키워드를 바꿔 검색해 보세요.",
                     )
             except (PaperAPIError, ValueError) as exc:
                 st.session_state.search_notice = ("error", str(exc))
             except Exception as exc:
                 st.session_state.search_notice = (
-                    "error", f"검색에 실패했습니다 ({type(exc).__name__}). 관리자에게 문의하세요."
+                    "error", f"검색에 실패했습니다 ({type(exc).__name__}). 관리자에게 문의하세요.",
                 )
 
-    # 선택지가 비어 있거나 사용자가 필터를 모두 해제해도 원래 검색 목록을 표시.
-    # 빈 목록과 필터 없는 전체 목록을 혼동하지 않도록 합니다.
     df = st.session_state.get("paper_df")
     if isinstance(df, pd.DataFrame) and not df.empty:
-        available_types = sorted(
-            {str(t).strip() or "미분류" for t in df["DB"]},
-            key=lambda t: (t == "미분류", t),
-        )
+        available_types = sorted({str(t).strip() or "미분류" for t in df["DB"]})
         chosen_types = st.multiselect(
             "검색 자료유형 필터", available_types, default=available_types,
-            key="sidebar_types",
-            help="자료유형을 지정하지 않으면 전체 검색자료가 표시됩니다. "
-                 "국회도서관 응답에 자료유형이 없으면 미분류로 표시됩니다.",
+            key="sidebar_types", help="선택을 모두 해제하면 전체 논문 목록이 표시됩니다.",
         )
         filtered = select_type(df, chosen_types)
         st.session_state.filtered_df = filtered
-        st.caption(f"선택된 자료: {len(filtered):,}건")
-        if not chosen_types:
-            st.caption("필터 선택이 없어 전체 자료를 보여줍니다.")
-        if "미분류" in available_types:
-            st.caption("※ '미분류'는 API에 자료유형 정보가 없는 자료입니다.")
+        st.caption(f"현재 표시되는 논문: {len(filtered):,}건")
     else:
         st.session_state.filtered_df = pd.DataFrame()
 
-    # The typed query is used in an actual external search URL; do not claim
-    # that merely typing into the field runs the institution's own search.
-    st.divider()
-    with st.expander("🏛 대학별 논문·원문 찾기", expanded=False):
-        dc_university_sidebar = st.selectbox(
-            "원문을 찾을 대학", universities(), key="dcollection_university",
-            help="대학별 공식 dCollection 사이트를 선택합니다.",
-        )
-        dc_query_sidebar = st.text_input(
-            "외부 웹검색에 사용할 제목·키워드",
-            value=st.session_state.get("search_keyword", ""),
-            key="dcollection_query",
-            placeholder="예: 내부통제",
-            help="입력 후 아래 '키워드 검색 결과 열기'를 누르면 Google에서 선택 대학의 dCollection만 실제 검색합니다.",
-        )
-        dc_side_links = make_dcollection_destinations(dc_university_sidebar, dc_query_sidebar)
-        st.link_button(
-            "🔎 입력 키워드로 검색 결과 열기 ↗",
-            dc_side_links["web_search_url"],
-            disabled=not bool(dc_side_links["keyword"]), use_container_width=True,
-        )
-        st.link_button(
-            "🏫 학교 dCollection 자료검색 화면 열기 ↗",
-            dc_side_links["repository_search_url"], use_container_width=True,
-        )
-        st.caption(
-            "검색 버튼은 Google의 실제 검색 결과를 새 탭에서 엽니다. "
-            "학교 자체 검색창으로 이동하는 버튼은 키워드를 자동 입력하지 않습니다. "
-            "여기서 논문 목록/PDF를 수집하지는 않습니다."
-        )
 
-
+def render_university_theses():
+    """02와 독립된 01의 대학 학위논문 검색 페이지. 학교 검색은 외부 링크로 명시."""
+    st.subheader("🏛 대학 학위논문 검색")
+    st.caption("대학 dCollection 자료를 찾습니다. 국회도서관 검색 결과와 섞지 않습니다.")
+    uni = st.selectbox("검색 대학", universities(), key="dcollection_university")
+    query = st.text_input(
+        "학위논문 제목 또는 연구 키워드",
+        value=st.session_state.get("search_keyword", ""),
+        key="dcollection_query", placeholder="예: 데이터베이스 포렌식",
+    )
+    links = make_dcollection_destinations(uni, query)
+    left, right = st.columns(2)
+    with left:
+        st.link_button("🔎 입력 키워드로 대학 논문 찾기 ↗", links["web_search_url"],
+                       disabled=not bool(links["keyword"]), use_container_width=True)
+    with right:
+        st.link_button("🏫 학교 dCollection 직접 검색 ↗", links["repository_search_url"],
+                       use_container_width=True)
+    st.link_button("전국 dCollection 참여대학 목록 ↗", links["directory_url"])
+    st.info(
+        "왼쪽 버튼은 Google의 site: 검색을 이용합니다. 검색 결과를 앱으로 자동 수집하지 않으며, "
+        "오른쪽 버튼은 대학 저장소 검색 화면만 열고 키워드를 자동 입력하지 않습니다. "
+        "검색 가능한 자료와 PDF 열람은 각 기관의 공개·이용 조건에 따릅니다."
+    )
 
 
 def render_external_controls():
@@ -408,8 +441,8 @@ def render_riss_controls():
 
 
 def render_search_results(admin_key):
-    st.subheader("1. 국회도서관 논문 검색 결과")
-    st.caption("위쪽 검색 조건에서 연구 주제와 검색 방식을 입력하세요. · API: /9720000/searchservice/basic (XML)")
+    st.subheader("📋 국회도서관 논문 검색 결과")
+    st.caption("공식 API /detail: DB별 검색 → 서지 정리 → 논문만 표시. 결과의 상세 링크는 PDF 다운로드 링크가 아닙니다.")
     notice = st.session_state.get("search_notice")
     if notice:
         level, message = notice
@@ -424,22 +457,22 @@ def render_search_results(admin_key):
     if isinstance(df, pd.DataFrame) and not df.empty:
         filtered = st.session_state.get("filtered_df", pd.DataFrame())
         m1, m2, m3 = st.columns(3)
-        m1.metric("API 전체 검색 결과", f"{st.session_state.get('total_count', 0):,}건")
-        m2.metric("현재 수집된 자료", f"{len(df):,}건")
+        m1.metric("API 검색 건수(검색방식 기준)", f"{st.session_state.get('total_count', 0):,}건")
+        m2.metric("현재 수집한 논문", f"{len(df):,}건")
         m3.metric("유형 필터 적용", f"{len(filtered):,}건")
         st.caption(
             f"실제 API 검색어: {st.session_state.get('search_used_keyword', '')} "
             f"(검색 대상: {st.session_state.get('search_field', '전체')}) · "
             "전체 검색 결과 수와 수집 건수는 다릅니다. 통계는 실제 수집한 자료만 대상으로 합니다."
         )
-        title_count = int(df["자료명/저자사항"].astype(str).str.strip().ne("").sum())
+        title_count = int(df["자료명/저자사항"].map(lambda s: bool(clean_paper_title(s))).sum())
         if title_count == 0:
             st.warning(
-                "검색 결과는 수집했지만 논문 제목(자료명/저자사항) 값이 비어 있습니다. "
-                "아래 'API 검색 진단'의 수집 필드명을 확인해 주세요."
+                "검색 결과는 수집했지만 API 응답의 자료명/저자사항이 비어 있습니다. "
+                "아래 상세페이지 보완 기능을 시도하거나 제목을 직접 확인해 주세요."
             )
         else:
-            st.caption(f"논문·자료명이 확인된 목록: {title_count:,}건 / 수집 {len(df):,}건")
+            st.caption(f"제목 확인 {title_count:,}건 / 미제공 {len(df)-title_count:,}건. 제목 미제공은 실제로 확인되지 않은 상태입니다.")
         if not filtered.empty:
             # 국회도서관에서 확인된 관리번호를 공식 상세정보 주소로 연결합니다.
             # PDF 바로 다운로드 링크가 아니며 권한은 국회도서관 사이트에서 판단합니다.
@@ -449,8 +482,17 @@ def render_search_results(admin_key):
                 format_reference(suggested_citation(row.to_dict()))
                 for _, row in filtered.iterrows()
             ]
+            # API에 없는 제목은 만들어내지 않고, 화면에만 식별용 안내를 넣습니다.
+            display_df["자료명/저자사항"] = display_df["자료명/저자사항"].map(
+                lambda t: clean_paper_title(t) or "⚠ 제목 미제공 — 국회도서관 상세정보 확인"
+            )
+            # HTML 하이라이트가 섞인 발행자 필드도 태그 제거.
+            if "발행자" in display_df.columns:
+                display_df["발행자"] = display_df["발행자"].map(clean_paper_title)
+            visible = [c for c in ("자료명/저자사항", "국회도서관 상세·원문 확인", "공개본 검색",
+                                    "발행자", "발행년", "DB", "정식 참고문헌") if c in display_df.columns]
             st.dataframe(
-                display_df, use_container_width=True, hide_index=True,
+                display_df[visible], use_container_width=True, hide_index=True,
                 column_config={
                     "자료명/저자사항": st.column_config.TextColumn(
                         "논문·자료명 / 저자사항", width="large",
@@ -472,7 +514,7 @@ def render_search_results(admin_key):
             )
         else:
             st.info("현재 선택한 유형과 일치하는 자료가 없습니다. 필터를 해제하면 전체 자료가 표시됩니다.")
-        st.info("논문 분석 시 오른쪽 '논문 AI 요약' 탭에서 초록 또는 PDF를 추가해야 합니다.")
+        st.info("논문 분석은 왼쪽 메뉴의 '02. 논문 읽기'에서 PDF를 업로드하여 진행하세요.")
     elif not admin_key:
         st.info("관리자가 DATA_GO_KR_API_KEY를 설정하면 검색할 수 있습니다. 직접 업로드 분석은 가능합니다.")
     elif st.session_state.get("search_attempts"):
@@ -487,6 +529,9 @@ def render_search_results(admin_key):
                 columns=["요청 검색어", "API 전체 건수", "수집된 자료 수"],
             )
             st.dataframe(attempts_df, hide_index=True, use_container_width=True)
+            errors = st.session_state.get("search_errors", [])
+            if errors:
+                st.warning("유형별 검색 안내: " + " / ".join(errors[:4]))
             xml_diag = st.session_state.get("xml_diagnostics", [])
             if isinstance(df, pd.DataFrame) and not df.empty:
                 st.markdown("**수집된 자료 필드 확인 (필드명과 값이 있는 건수만 표시)**")
@@ -511,66 +556,98 @@ def render_search_results(admin_key):
                 "실제 검색 건수가 0인 경우에만 검색어를 바꿔 보세요."
             )
 
-    # Prominent only for real API 0 results; available as collapsed expander otherwise.
+    # 국회도서관 검색화면에는 대학 검색 UI를 더 이상 중복 표시하지 않습니다.
     fallback_df = st.session_state.get("paper_df")
-    collected_count = (len(fallback_df) if isinstance(fallback_df, pd.DataFrame) else 0)
+    collected_count = len(fallback_df) if isinstance(fallback_df, pd.DataFrame) else 0
     zero_results = no_results_from_nanet(
         st.session_state.get("total_count", 0),
-        collected_count,
-        st.session_state.get("search_attempts", []),
+        collected_count, st.session_state.get("search_attempts", []),
     )
     if zero_results:
-        st.warning(
-            "\uad6d\ud68c\ub3c4\uc11c\uad00 API \uac80\uc0c9\uc5d0\uc11c \uc870\ud68c\ub41c \uc790\ub8cc\uac00 0\uac74\uc785\ub2c8\ub2e4. "
-            "\ubbf8\ub4f1\ub85d\uc774\ub77c\uace0 \ub2e8\uc815\ud558\uc9c0 \ub9c8\uc138\uc694. "
-            "\uc544\ub798 \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30 \ub9c1\ud06c\ub97c \ud655\uc778\ud574 \ubcf4\uc138\uc694."
-        )
-    with st.expander(
-        "\U0001f3db \ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30",
-        expanded=zero_results,
-    ):
-        dc_university = st.session_state.get("dcollection_university", universities()[0])
-        dc_query = st.session_state.get("dcollection_query", st.session_state.get("search_keyword", ""))
-        links = make_dcollection_destinations(dc_university, dc_query)
-        st.caption(
-            "\uc67c\ucabd\uc758 '\ub300\ud559\ubcc4 \ub17c\ubb38\u00b7\uc6d0\ubb38 \ucc3e\uae30'\uc5d0\uc11c "
-            "\ub300\ud559\uacfc \uac80\uc0c9\uc5b4\ub97c \ubc14\uafbc \uc218 \uc788\uc2b5\ub2c8\ub2e4."
-        )
-        st.write(f"\uc120\ud0dd\ud55c \ub300\ud559: **{dc_university}**")
-        st.caption("\uc7ac\uac80\uc0c9\ud560 \uc81c\ubaa9/\ud0a4\uc6cc\ub4dc:")
-        if links["keyword"]:
-            st.code(links["keyword"], language=None)
-        else:
-            st.caption("\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694.")
-        a, b = st.columns(2)
-        with a:
-            st.link_button(
-                "🔎 입력 키워드로 외부 검색 결과 열기 ↗",
-                links["web_search_url"], use_container_width=True,
-                disabled=not bool(links["keyword"]),
-            )
-        with b:
-            st.link_button(
-                "🏫 dCollection 자료검색 페이지 열기 ↗",
-                links["repository_search_url"], use_container_width=True,
-            )
-        st.link_button(
-            "🏫 전국 dCollection 참여대학 목록 보기",
-            links["directory_url"], use_container_width=True,
-        )
-        st.caption(f"실제 외부 검색 조건: {links['search_query']}")
-        st.info(
-            "첫 버튼은 입력 키워드를 이용하여 Google에서 선택 대학 사이트만 검색합니다. "
-            "둘째 버튼은 학교 dCollection 검색 화면만 열며, 키워드가 자동 입력되지 않습니다. "
-            "Google에 색인되지 않은 논문은 이 방식으로 발견되지 않을 수 있습니다."
-        )
-        if dc_university == ALL_UNIVERSITIES:
-            st.info("학교를 지정하고 싶다면 참여기관 목록에서 정확한 대학 dCollection을 찾아보세요.")
-        st.caption(
-            "외부 웹검색 결과를 앱 안으로 자동 수집하지 않습니다. "
-            "원문 공개 여부는 개별 대학 저장소에서 확인하고, 확보한 PDF는 AI 요약 탭에 직접 업로드해 주세요."
-        )
+        st.info("국회도서관에 결과가 없다면 위 '대학 학위논문 검색' 탭에서 dCollection을 확인해 보세요.")
 
+    # 제목이 빠진 자료는 공식 링크를 열어 확인하게 하고, 선택적으로 일부만 자동 보완합니다.
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        incomplete = missing_title_rows(df)
+        if not incomplete.empty:
+            st.warning(
+                f"자료명·제목이 비어 있는 논문 {len(incomplete):,}건: "
+                "원문 상세페이지에 제목이 존재하더라도 검색 API에 제공되지 않을 수 있습니다."
+            )
+            with st.expander("📝 제목 누락 자료 보완 (국회도서관 상세정보 대조)", expanded=False):
+                st.caption("자동 보완은 국회도서관 공개 HTML에서 일부만 시도하며 로그인·접근 제한을 우회하지 않습니다.")
+                eligible = incomplete[incomplete["controlno"].astype(str).str.strip().ne("")]
+                if not eligible.empty:
+                    if st.button("🔄 공식 상세페이지에서 제목 보완 시도 (최대 5건)",
+                                 key="nanet_enrich_limited"):
+                        changed = 0
+                        errors = []
+                        for _, row in eligible.head(5).iterrows():
+                            control = str(row["controlno"]).strip()
+                            try:
+                                metadata = fetch_nanet_detail_metadata(control)
+                                if _apply_metadata_to_catalog(control, metadata):
+                                    changed += 1
+                            except MetadataLookupError as exc:
+                                errors.append(f"{control}: {exc}")
+                            except Exception as exc:
+                                errors.append(f"{control}: 상세페이지 구조 확인 실패 ({type(exc).__name__})")
+                        if changed:
+                            st.success(f"실제 상세페이지에서 제목을 확인한 {changed}건을 보완했습니다.")
+                        if errors:
+                            st.warning("접근·추출 실패한 자료는 그대로 유지합니다. " + "; ".join(errors[:3]))
+                        if changed:
+                            st.rerun()
+                    choices = [str(v).strip() for v in eligible["controlno"].tolist() if str(v).strip()]
+                    ctrl = st.selectbox("직접 확인할 자료 관리번호", choices, key="nanet_missing_selection")
+                    url = nanet_detail_url(ctrl)
+                    if url:
+                        st.link_button("📖 선택 자료의 국회도서관 상세정보 열기 ↗", url,
+                                       use_container_width=True)
+                    with st.form("nanet_manual_title_form"):
+                        confirmed_title = st.text_input(
+                            "상세페이지에서 직접 확인한 제목", placeholder="예: 애플 Siri 서비스의 포렌식 분석 연구"
+                        )
+                        confirmed_author = st.text_input("저자명 (확인한 경우에만 입력)", placeholder="예: 조현지, 양지연, 장진수")
+                        if st.form_submit_button("✅ 확인한 제목 적용"):
+                            if not confirmed_title.strip():
+                                st.error("국회도서관에서 확인한 제목을 입력해 주세요.")
+                            else:
+                                cleaned = clean_paper_title(confirmed_title)
+                                if not cleaned:
+                                    st.error("유효한 제목이 없습니다.")
+                                else:
+                                    combined = f"{cleaned} / {clean_paper_title(confirmed_author)}" if confirmed_author.strip() else cleaned
+                                    if _apply_metadata_to_catalog(ctrl, {"자료명/저자사항": combined}):
+                                        st.success("선택한 검색 자료의 제목을 적용했습니다. 정식 참고문헌도 업데이트됩니다.")
+                                        st.rerun()
+                else:
+                    st.info("관리번호가 없는 자료는 자동 보완 대상이 아닙니다. API 진단을 확인하세요.")
+
+
+def _apply_metadata_to_catalog(controlno: str, metadata: dict) -> bool:
+    """상세에서 실제 확인한 필드만 API 검색 목록에 반영. 다른 행·값은 보존."""
+    original = st.session_state.get("paper_df")
+    if not isinstance(original, pd.DataFrame) or original.empty:
+        return False
+    title = clean_paper_title(metadata.get("자료명/저자사항", ""))
+    if not title or "controlno" not in original:
+        return False
+    mask = original["controlno"].astype(str).str.strip().eq(str(controlno).strip())
+    if not mask.any():
+        return False
+    updated = original.copy()
+    for key, val in metadata.items():
+        value = clean_paper_title(val)
+        if value and key != "DB":
+            if key not in updated:
+                updated[key] = ""
+            updated.loc[mask, key] = value
+    st.session_state.paper_df = updated
+    # 현재 지정한 유형 필터가 있더라도 화면 반영 전에 원본 상태를 안전하게 갱신합니다.
+    choices = st.session_state.get("sidebar_types", list(updated["DB"].unique()))
+    st.session_state.filtered_df = select_type(updated, choices)
+    return True
 
 
 def render_ai_summary(user_ai_key, model):

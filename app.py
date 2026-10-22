@@ -21,7 +21,8 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from legacy_views_v22 import (
-    admin_api_key, render_search_controls, render_riss_controls, render_external_controls, render_search_results,
+    admin_api_key, render_search_controls, render_university_theses,
+    render_riss_controls, render_external_controls, render_search_results,
     render_ai_summary, render_trends, render_riss, render_sources,
     render_submission,
 )
@@ -33,7 +34,7 @@ from v23_screens import (
 
 load_dotenv()
 st.set_page_config(
-    page_title='대학원 AI 논문 연구 도우미 v2.3', page_icon='🎓',
+    page_title='대학원 AI 논문 연구 도우미 v2.3.1', page_icon='🎓',
     layout='wide', initial_sidebar_state='expanded',
 )
 st.markdown('''
@@ -56,7 +57,7 @@ MENUS = [
 
 with st.sidebar:
     st.title('🎓 논문 연구 도우미')
-    st.caption('v2.3 · 논문 검색부터 나의 학위논문까지')
+    st.caption('v2.3.1 · 논문 검색부터 나의 학위논문까지')
     selected_menu = st.radio('연구 진행 단계', MENUS, key='v23_main_menu')
     st.divider()
     st.subheader('🤖 개인 AI 설정')
@@ -97,24 +98,29 @@ with st.sidebar:
 
 st.title('🎓 대학원 AI 논문 연구 도우미')
 st.caption('자료 찾기 → 논문 읽기 → 선행연구 분석 → 연구 방향·계획 → 연구 수행·분석 → 내 논문 작성')
-st.caption('v2.3 · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
+st.caption('v2.3.1 · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
 
 if selected_menu == MENUS[0]:
     st.header('01. 자료 찾기')
-    tabs = st.tabs(['국회도서관 검색·원문', '수집 자료 연구 동향',
-                    'RISS 서지통계', '학회·연구보고서 검색'])
+    # 국회도서관/대학별 검색은 서로 다른 탭으로 표시합니다. 기존 RISS·동향 등은 보조 탭에 보존.
+    tabs = st.tabs(['국회도서관 논문 검색', '대학 학위논문 검색', '기타 자료·통계'])
     with tabs[0]:
-        render_search_controls()  # 내부에 자체 펼침 메뉴가 있어 중첩 expander를 만들지 않음.
+        render_search_controls()
         render_search_results(admin_api_key())
     with tabs[1]:
-        render_trends()
+        render_university_theses()
     with tabs[2]:
-        render_riss_controls()
-        render_riss()
-    with tabs[3]:
-        render_external_controls()
-        render_sources()
-    st.caption('검색 API는 서지 목록 중심이며 PDF 원문 자동 다운로드를 보장하지 않습니다. 확보한 PDF는 02에서 업로드하세요.')
+        st.caption('기존 연구 동향·RISS 통계·학회 자료 기능은 유지하되, 논문 검색과 분리했습니다.')
+        misc = st.tabs(['연구 동향', 'RISS 서지통계', '학회·연구보고서'])
+        with misc[0]:
+            render_trends()
+        with misc[1]:
+            render_riss_controls()
+            render_riss()
+        with misc[2]:
+            render_external_controls()
+            render_sources()
+    st.caption('국회도서관 자료검색은 서지정보 중심이며 원문 PDF 자동 확보를 보장하지 않습니다. PDF 분석은 02에서 진행하세요.')
 
 elif selected_menu == MENUS[1]:
     st.header('02. 논문 읽기')
