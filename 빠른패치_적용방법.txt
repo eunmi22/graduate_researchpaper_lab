@@ -1,0 +1,17 @@
+대학원 AI 논문 연구 도우미 v2.3.3 빠른 수정
+
+[현재 v2.3.2 버전에서 덮어쓰기]
+1. 실행 중인 Anaconda Prompt에서 Ctrl+C로 Streamlit을 종료합니다.
+2. C:\AI\paper 폴더를 백업합니다.
+3. paper_v233_patch.zip을 압축 해제한 뒤 파일을 C:\AI\paper에 덮어씁니다.
+   app.py, legacy_views_v22.py, nanet_search_flow.py,
+   paperlab.py, citation_styles.py, VERSION, README.md,
+   v2_3_3_자료유형정렬_설치안내.md, tests 관련 파일.
+4. 다음 명령으로 재실행합니다.
+   cd /d C:\AI\paper
+   python -m streamlit run app.py
+5. 01 자료 찾기에서 논문을 검색하면 학위논문/학술기사/도서자료 순서로 나타납니다.
+6. 더 많은 자료를 정렬하려면 '다음 검색 페이지 가져오기' 버튼을 사용하세요.
+
+전체 261건 표시 여부는 실제 국회도서관 API의 응답 자료에 따라 다릅니다.
+비밀키(.env, secrets.toml)는 ZIP에 없습니다. 기존 설정을 그대로 사용하세요.

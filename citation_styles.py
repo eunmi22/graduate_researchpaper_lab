@@ -13,13 +13,15 @@ from typing import Mapping
 JOURNAL = "학술지 논문"
 THESIS = "석사·박사 학위논문"
 REPORT = "기관 연구보고서"
+BOOK = "단행본"
 UNKNOWN = "자료유형 확인 필요"
-REFERENCE_TYPES = (JOURNAL, THESIS, REPORT)
+REFERENCE_TYPES = (JOURNAL, THESIS, REPORT, BOOK)
 
 REFERENCE_TEMPLATES = {
     JOURNAL: '[저자], “[논문 제목]”, [학술지명], [권], [호], [수록 페이지], [발행 연월]. DOI: [식별번호].',
     THESIS: '[저자], “[논문 제목]”, [석사학위논문 또는 박사학위논문], [학위수여 대학·대학원], [학위수여 연월].',
     REPORT: '[저자 또는 기관명], “[보고서 제목]”, [발행기관], [보고서 번호], [발행 연월]. [DOI 또는 URL].',
+    BOOK: '[저자], 『[도서 제목]』, [출판사], [발행 연월].',
 }
 THESIS_EXAMPLE = '김수용, “Amazon RDS 데이터베이스 디지털포렌식 조사 기법 연구”, 석사학위논문, 고려대학교 대학원, 2026년 8월.'
 
@@ -90,6 +92,8 @@ def guess_reference_type(row: Mapping) -> str:
         return THESIS
     if any(token in kind for token in ("학술지", "학술기사", "학술논문", "journal", "article")):
         return JOURNAL
+    if any(token in kind for token in ("도서", "단행본", "ebook", "전자책")):
+        return BOOK
     if any(token in kind for token in ("연구보고서", "기관보고서", "research report")):
         return REPORT
     # 단순 국내기사·국외기사는 학술지 수록정보가 있어야 학술논문으로 인정.
@@ -132,6 +136,11 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
             degree = "박사학위논문"
         elif "석사" in raw_type:
             degree = "석사학위논문"
+    publisher = _first(row, "발행기관", "발행자", "publisher")
+    if kind == BOOK and publisher:
+        # '서울 : 출판사, 2026' -> '출판사': 원문에 적힌 부분만 사용합니다.
+        publisher = re.sub(r"^.{1,25}?\s*:\s*", "", publisher)
+        publisher = re.sub(r",?\s*(?:19|20)\d{2}(?:[.\-/]\s*\d{1,2})*(?:\s*[.]?\s*\d{1,2})?\s*$", "", publisher).strip(" ,")
     return {
         "type": kind,
         "author": _first(row, "저자", "저자명", "author") or author_from_combined,
@@ -144,7 +153,7 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
         "doi": _first(row, "DOI", "doi"),
         "degree": degree,
         "university": _first(row, "학위수여 대학·대학원", "학위수여기관", "수여대학", "university"),
-        "publisher": _first(row, "발행기관", "발행자", "publisher"),
+        "publisher": publisher,
         "report_number": _first(row, "보고서 번호", "보고서번호", "report_number"),
         "url": _first(row, "원문URL", "원문링크", "URL", "url"),
     }
@@ -185,6 +194,9 @@ def format_reference(record: Mapping) -> str:
         degree = field("degree", "학위종류")
         university = field("university", "학위수여 대학·대학원")
         return f'{author}, “{title}”, {degree}, {university}, {date_value}.'
+    if kind == BOOK:
+        publisher = field("publisher", "출판사")
+        return f'{author}, 『{title}』, {publisher}, {date_value}.'
     if kind == REPORT:
         publisher = field("publisher", "발행기관")
         number = field("report_number", "보고서 번호")
@@ -205,6 +217,8 @@ def missing_citation_fields(record: Mapping) -> list[str]:
                   ("publication_date", "발행 연월"), ("doi", "DOI")),
         THESIS: (("author", "저자"), ("title", "제목"), ("degree", "학위종류"),
                  ("university", "학위수여 대학·대학원"), ("publication_date", "학위수여 연월")),
+        BOOK: (("author", "저자"), ("title", "도서 제목"),
+               ("publisher", "출판사"), ("publication_date", "발행 연월")),
         REPORT: (("author", "저자/기관명"), ("title", "보고서 제목"),
                  ("publisher", "발행기관"), ("report_number", "보고서 번호"),
                  ("publication_date", "발행 연월")),

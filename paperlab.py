@@ -251,7 +251,7 @@ def search_candidates(keyword: str, automatic_retry: bool = True) -> list[str]:
 def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10,
                   session=None, search_field: str = "전체",
                   diagnostics: list[dict] | None = None,
-                  db_name: str | None = None) -> tuple[int, pd.DataFrame]:
+                  db_name: str | None = None, start_page: int = 1) -> tuple[int, pd.DataFrame]:
     """공식 basic 검색. 문서 규정: serviceKey/pageno/displaylines/search 필수."""
     key = normalize_key(api_key)
     keyword = (keyword or "").strip()
@@ -261,12 +261,14 @@ def search_papers(api_key: str, keyword: str, pages: int = 2, per_page: int = 10
         raise ValueError("검색 대상은 전체/자료명/키워드 중에서 선택하세요.")
     if not (1 <= pages <= 5 and 1 <= per_page <= 20):
         raise ValueError("검색 페이지는 1~5, 페이지당 결과는 1~20으로 제한합니다.")
+    if not (1 <= start_page <= 100):
+        raise ValueError("시작 페이지는 1~100 범위여야 합니다.")
     if db_name is not None and db_name not in PAPER_DB_NAMES:
         raise ValueError("지정할 수 없는 논문 자료유형입니다.")
     client = session if session is not None else requests
     all_rows = []
     full_total = 0
-    for page in range(1, pages + 1):
+    for page in range(start_page, start_page + pages):
         params = {
             "serviceKey": key, "pageno": page,
             "displaylines": per_page, "search": f"{search_field},{keyword}",
@@ -334,13 +336,13 @@ def classify_catalog_record(row: dict) -> str:
     """
     kind = clean_paper_title(row.get("DB", "")).lower().replace(" ", "")
     journal = clean_paper_title(row.get("수록지명", "") or row.get("학술지명", ""))
-    if any(w in kind for w in ("일반도서", "아동도서", "어린이도서", "단행본",
+    if any(w in kind for w in ("일반도서", "도서자료", "도서", "아동도서", "어린이도서", "단행본",
                               "전자책", "정기간행물", "신문", "잡지", "멀티미디어",
                               "웹db", "학술행사", "학술대회프로그램")):
         return "기타자료"
     if any(w in kind for w in ("학위논문", "석사학위", "박사학위", "dissertation", "thesis")):
         return "학위논문"
-    if any(w in kind for w in ("국내학술기사", "국외학술기사", "학술논문", "학회논문",
+    if any(w in kind for w in ("국내학술기사", "국외학술기사", "학술기사", "학술논문", "학회논문",
                               "학술지", "저널논문", "journalarticle")):
         return "학술논문"
     if kind in ("국내기사", "국외기사", "학술기사", "기사"):
