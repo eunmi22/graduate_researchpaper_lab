@@ -1,0 +1,574 @@
+           Open API 활용가이드
+
+
+
+
+공공데이터 오픈 API 활용가이드
+
+
+
+
+ - 1 -
+                                                                                                                                         Open API 활용가이드
+
+
+
+
+                                                                                목 차
+
+
+
+1. 서비스 명세 ································································································································································ 3
+
+       1.1 공공데이터 오픈 API 조회 서비스 ··············································································································· 3
+
+              가. API 서비스 개요 ········································································································································ 3
+
+              나. 상세기능 목록 ··········································································································································· 3
+
+              다. 상세기능내역 ············································································································································· 4
+
+                     1) [통합검색 목록조회] 상세기능명세                                                                                                                                4
+
+                     2) [상세검색 목록조회] 상세기능명세                                                                                                                                7
+
+2. OpenAPI 에러 코드정리 ·········································································································································· 9
+
+2-1 공공데이터 포털 에러코드 ··································································································································· 9
+
+2-2 제공기관 에러코드 ··············································································································································· 10
+
+
+
+
+                                                                                 - 2 -
+                                                                             Open API 활용가이드
+
+
+
+
+1. 서비스 명세
+
+
+1.1 공공데이터 오픈 API 조회 서비스
+
+
+가. API 서비스 개요
+
+                 API 명(영문)   searchservice
+
+                 API 명(국문)   자료 검색 서비스
+ API 서비스 정보                  국회도서관에서 제공하는 도서자료, 학위논문, 국내외 기사
+                  API 설명     등의        목록 DB 를        키워드와          검색대상,        검색조건      등을
+                             사용하여 검색하는 서비스
+
+                             [O] serviceKey         [ ] 인증서 (GPKI/NPKI)
+                서비스 인증/권한
+                             [ ] Basic (ID/PW) [ ] 없음
+
+                 메시지 레벨
+                             [ ] 전자서명           [ ] 암호화         [O] 없음
+                   암호화
+
+   API 서비스      전송 레벨 암호화    [ ] SSL     [O] 없음
+   보안적용                      [ ] SOAP 1.2
+   기술 수준                     (RPC-Encoded, Document Literal, Document Literal Wrapped)
+                인터페이스 표준
+                             [O] REST (GET)
+                             [ ] RSS 1.0       [ ] RSS 2.0    [ ] Atom 1.0    [ ] 기타
+
+                교환 데이터 표준
+                             [O] XML       [ ] JSON      [ ] MIME     [ ] MTOM
+                (중복선택가능)
+
+                 서비스 URL     http://apis.data.go.kr/9720000/searchservice
+
+                서비스 명세 URL   n/a
+                 (WSDL 또는
+                   WADL)
+
+                 서비스 버전      1.1
+   API 서비스
+                서비스 시작일      2021-12-20                  서비스 배포일              2021-12-17
+   배포정보
+                 서비스 이력      2021-12-17 : 서비스 시작
+
+                메시지 교환유형     [O] Request-Response            [ ] Publish-Subscribe
+                             [ ] Fire-and-Forgot       [ ] Notification
+
+                서비스 제공자      유란영 / 정보기술개발과 / 02-6788-4150
+
+                데이터 갱신주기     일 1회
+
+
+
+                                       - 3 -
+                                                                                 Open API 활용가이드
+
+
+
+
+나. 상세기능 목록
+
+    번호                 API 명(국문)                상세기능명(영문)                    상세기능명(국문)
+
+     1         자료 검색 서비스                              basic             통합검색 목록조회
+
+     2                                                detail            상세검색 목록조회
+
+
+
+다. 상세기능내역
+
+1) [통합검색 목록조회] 상세기능명세
+
+a) 상세기능정보
+
+     상세기능 번호            1                               상세기능 유형              조회 (목록)
+
+    상세기능명(국문)           통합검색 목록조회
+
+     상세기능 설명            도서자료, 학위논문, 국내외 기사 등의 목록 DB 를 키워드로 통합 검색
+
+     Call Back URL      http://apis.data.go.kr/9720000/searchservice/basic
+
+  최대 메시지 사이즈            [4000] byte
+
+    평균 응답 시간            [500] ms                      초당 최대 트랙잭션             [30] tps
+
+b) 요청 메시지 명세
+
+  항목명(영문)            항목명(국문)       항목크기      항목구분              샘플데이터                    항목설명
+
+serviceKey      인증키                100           1       인증키                 공공데이터포털에서
+                                                         (URL Encode)        발급받은 인증키
+
+pageno          페이지 번호             4             1       1                   페이지 번호
+
+displaylines    한 페이지 결과           4             1       10                  한 페이지
+                수                                                            결과(record)수
+
+search          검색어                500           1       전체,코로나|자료           검색어는
+                                                         명,미국                [검색항목,키워드]
+                                                                             형태로 구성되어야
+                                                                             하며, | (파이프)로
+                                                                             다수의 검색어를
+                                                                             연결하여 검색
+                                                                             가능(개별 검색어는
+                                                                             AND 연산으로 처리됨)
+
+
+
+
+                                                                             <검색항목>기본검색,
+
+                                              - 4 -
+                                                                              Open API 활용가이드
+
+
+
+
+                                                                          전체, 자료명, 저자,
+                                                                          발행자, 키워드,
+                                                                          청구기호
+
+                                                                          예) 전체와 자료명에서
+                                                                          ‘홍길동’ 검색:
+
+                                                                          전체,홍길동|자료명,홍길
+                                                                          동
+
+※ 항목구분 : 필수(1), 옵션(0)
+
+c) 응답 메시지 명세
+
+  항목명(영문)            항목명(국문)       항목크기        항목구분          샘플데이터              항목설명
+
+resultCode         결과코드           2               1     00                결과코드
+
+resultMsg          결과메세지          50              1     OK                결과메세지
+
+total              전체 결과 수        5               1     36225             전체 결과(record) 수
+
+record                                            1
+
+   item                                          1..n
+
+        name       디스플레이          300            0..n   자료명/저자사항          디스플레이 카테고리명
+                   카테고리명
+
+        value      디스플레이          1000           0..n   미국      연방정부의     디스플레이 데이터
+                   데이터                                  코로나     19   백신
+                                                        및…
+
+※ 항목구분 : 필수(1), 옵션(0), 복수, 1 건 이상 복수건(1..n), 0 건 또는 복수건(0..n)
+
+d) 요청/응답 메시지 예제
+
+                                               요청메시지
+
+http://apis.data.go.kr/9720000/searchservice/basic?serviceKey=인증키&pageno=1&displaylines=10&se
+arch=전체,코로나|자료명,미국
+
+                                               응답메시지
+
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+             <response>
+                <header>
+                 <resultMsg>NORMAL_CODE</resultMsg>
+                 <resultCode>00</resultCode>
+
+
+                                                - 5 -
+                                                                   Open API 활용가이드
+
+
+
+
+ </header>
+ <record>
+   <item>
+     <value>KINX2021157581</value>
+     <name>controlno</name>
+   </item>
+   <item>
+     <value>미국 연방정부의 코로나 19 백신 및 방역 관련 법제적 대응 분석 및 시사점
+     =Legal response to COVID-19 and ensuring vaccine in US and implications for South
+     Korea /이석민,장선미</value>
+     <name>자료명/저자사항</name>
+   </item>
+   <item>
+     <value>동국대학교 비교법문화연구원,2021. 4. 30</value>
+     <name>발행자</name>
+   </item>
+   <item>
+     <value>2022</value>
+     <name>발행년</name>
+   </item>
+   <item>
+     <value>비교법연구 = The journal of comparative law (JCL).제 21 권 제 1 호 (2021 년
+     4 월),</value>
+     <name>수록지명</name>
+   </item>
+   <item>
+     <value>340.5 ㅂ 437</value>
+     <name>자료실</name>
+   </item>
+   <item>
+     <value>국내학술기사</value>
+     <name>DB</name>
+   </item>
+</record>
+<record>
+   <item>
+     <value>KINX2021250008</value>
+
+                                   - 6 -
+                                                          Open API 활용가이드
+
+
+
+
+            <name>controlno</name>
+          </item>
+         <item>
+            <value>"과학자들이 백신 효과 있다니 믿어야죠" :미국 바이든 정부, 백신 접종
+거부자에 힘 쏟기보다 2 차 접종자 부스터샷에 더 주력 /김현</value>
+            <name>자료명/저자사항</name>
+         </item>
+         <item>
+            <value>시사저널사,2021. 12. 28</value>
+            <name>발행자</name>
+        </item>
+        <item>
+            <value>2021</value>
+            <name>발행년</name>
+        </item>
+        <item>
+            <value>시사저널.통권 1679 호 (2021-12-28),</value>
+            <name>수록지명</name>
+        </item>
+        <item>
+            <value>051.1 ㅅ 547</value>
+            <name>자료실</name>
+        </item>
+        <item>
+            <value>국내학술기사</value>
+            <name>DB</name>
+        </item>
+     </record>
+            ...
+
+
+      <total>572</total>
+    </response>
+
+
+
+
+                                         - 7 -
+                                                                                  Open API 활용가이드
+
+
+
+
+2) [상세검색 목록조회] 상세기능명세
+
+a) 상세기능정보
+
+     상세기능 번호            2                               상세기능 유형               조회(목록)
+
+    상세기능명(국문)           상세검색 목록조회
+
+     상세기능 설명            도서자료, 학위논문, 국내외 기사 등의 목록 DB 를 키워드와 검색대상,
+                        검색조건 등을 사용하여 상세 검색
+
+     Call Back URL      http://apis.data.go.kr/9720000/searchservice/detail
+
+  최대 메시지 사이즈            [4000] byte
+
+    평균 응답 시간            [500] ms                       초당 최대 트랙잭션             [30] tps
+
+b) 요청 메시지 명세
+
+  항목명(영문)            항목명(국문)       항목크기      항목구분             샘플데이터                      항목설명
+
+serviceKey      인증키                100           1       인증키                  공공데이터포털에서
+                                                         (URL Encode)         발급받은 인증키
+
+pageno          페이지 번호             5             1       1                    페이지 번호
+
+displaylines    한 페이지 결과           3             1       10                   한 페이지
+                수                                                             결과(record)수
+
+dbname          검색대상 DB            20            1       일반도서
+
+search          검색어                500           1       자료명,생명               검색어는
+                                                         |저자명,홍길동             [검색항목,키워드]
+                                                                              형태로 구성되어야
+                                                                              하며, | (파이프)로
+                                                                              다수의 검색어를
+                                                                              연결하여 검색
+                                                                              가능(개별 검색어는
+                                                                              AND 연산으로 처리됨)
+
+                                                                              <검색항목>기본검색,
+                                                                              전체, 자료명, 저자,
+                                                                              발행자, 키워드,
+                                                                              청구기호
+
+                                                                              예) 전체와 자료명에서
+                                                                              ‘홍길동’ 검색:
+
+                                                                              전체,홍길동|자료명,한국
+
+
+                                               - 8 -
+                                                                          Open API 활용가이드
+
+
+
+
+option            검색옵션            500          0      발행년도,2000|발     발행년도가 하나일
+                                                      행년도,2010        경우 시작년도로
+                                                                      현재까지 검색하고 두
+                                                                      개일 경우 앞은
+                                                                      시작년도, 뒤는
+                                                                      종료년도로 between
+                                                                      검색, 원문유무(유:1,
+                                                                      무:0)
+
+※ 항목구분 : 필수(1), 옵션(0)
+
+c) 응답 메시지 명세
+
+  항목명(영문)           항목명(국문)       항목크기     항목구분            샘플데이터             항목설명
+
+resultCode        결과코드            2            1      00              결과코드
+
+resultMsg         결과메세지           50           1      OK              결과메세지
+
+total             전체 결과 수         5            1      4464            전체 결과(record) 수
+
+record                                         1
+
+   item                                       1..n
+
+        name      디스플레이           300         0..n    자료명/저자사항        디스플레이 카테고리명
+                  카테고리명
+
+        value     디스플레이           1000        0..n    기초생명과학          디스플레이 데이터
+                  데이터                                 실험서
+
+※ 항목구분 : 필수(1), 옵션(0), 복수, 1 건 이상 복수건(1..n), 0 건 또는 복수건(0..n)
+
+d) 요청/응답 메시지 예제
+
+                                          요청메시지
+
+http://apis.data.go.kr/9720000/searchservice/detail?pageno=1&displaylines=10&search=자료명,생명&d
+bname=일반도서&option=발행년도,2000|발행년도,2010&serviceKey=인증키
+
+                                          응답메시지
+
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+ <response>
+   <header>
+        <resultMsg>NORMAL_CODE</resultMsg>
+        <resultCode>00</resultCode>
+   </header>
+   <total>4464</total>
+
+                                             - 9 -
+                                                   Open API 활용가이드
+
+
+
+
+  <record>
+     <item>
+         <value>MONO12021000054178</value>
+         <name>controlno</name>
+     </item>
+     <item>
+         <value>570.724-21-2</value>
+         <name>청구기호</name>
+     </item>
+     <item>
+         <value>기초생명과학 실험서 /지은이:
+이선희,김민주,이원호,이종호,김혁순,강태홍,정진웅,임선희</value>
+         <name>자료명/저자사항</name>
+     </item>
+     <item>
+         <value>라이프사이언스, 김민주,이원호,이종호,김혁순,강태홍,정진웅,임선희</value>
+         <name>발행자</name>
+     </item>
+     <item>
+         <value>2022</value>
+         <name>발행년</name>
+     </item>
+     <item>
+         <value>Y</value>
+         <name>목차</name>
+     </item>
+     <item>
+         <value>일반도서</value>
+         <name>DB</name>
+     </item>
+  </record>
+  <record>
+     <item>
+         <value>MONO32021000008284</value>
+         <name>controlno</name>
+     </item>
+     <item>
+
+                                       - 10 -
+                                                                    Open API 활용가이드
+
+
+
+
+              <value>352.745-21-121</value>
+              <name>청구기호</name>
+        </item>
+        <item>
+              <value>?力, 生命?秩序 :"二?"后科??政治?系?究 /??? 著</value>
+              <name>자료명/저자사항</name>
+        </item>
+        <item>
+              <value>中?社?科?出版社, </value>
+              <name>발행자</name>
+        </item>
+        <item>
+              <value>2021</value>
+              <name>발행년</name>
+        </item>
+        <item>
+              <value>일반도서</value>
+              <name>DB</name>
+        </item>
+   </record>                     ...
+</response>
+
+
+
+
+2. OpenAPI 에러 코드정리
+
+2-1 공공데이터 포털 에러코드
+
+에러코드                        에러메시지                                  설명
+
+   1       APPLICATION_ERROR                           어플리케이션 에러
+
+   4       HTTP_ERROR                                  HTTP 에러
+
+   12      NO_OPENAPI_SERVICE_ERROR                    해당 오픈 API 서비스가 없거나 폐기됨
+
+   20      SERVICE_ACCESS_DENIED_ERROR                 서비스 접근거부
+
+   22      LIMITED_NUMBER_OF_SERVICE_REQUESTS_E        서비스 요청제한횟수 초과에러
+           XCEEDS_ERROR
+
+   30      SERVICE_KEY_IS_NOT_REGISTERED_ERROR         등록되지 않은 서비스키
+
+                                              - 11 -
+                                                                             Open API 활용가이드
+
+
+
+
+  31       DEADLINE_HAS_EXPIRED_ERROR                  활용기간 만료
+
+  32       UNREGISTERED_IP_ERROR                       등록되지 않은 IP
+
+  99       UNKNOWN_ERROR                               기타에러
+  ※    공공데이터포털에서 출력되는 오류메세지는 XML 로만 출력되며, 형태는 아래와 같습니다.
+       <OpenAPI_ServiceResponse>
+
+       <cmmMsgHeader>
+
+       <errMsg>SERVICE ERROR</errMsg>
+
+       <returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg>
+
+       <returnReasonCode>30</returnReasonCode>
+
+       </cmmMsgHeader>
+
+       </OpenAPI_ServiceResponse>
+
+
+
+
+2-2 제공기관 에러코드
+
+에러코드                        에러메시지                                           설명
+
+  04       HTTP ERROR.                                 HTTP 에러
+
+  10       INVALID_REQUEST_PARAMETER_ERROR             잘못된 요청 파라메터 에러입니다.
+
+  11       INVALID_REQUEST_PARAMETER_ERROR             필수요청 파라메터가 없습니다.
+
+  12       NO OPENAPI SERVICE ERROR.                   해당 OpenAPI 서비스가 없거나 폐기됨
+
+  20       SERVICE ACCESS DENIED ERROR.                서비스 접근거부
+
+  22       LIMITED NUMBER OF SERVICE REQUESTS          서비스 요청제한횟수 초과에러(일별
+           EXCEEDS ERROR.                              요청한도 등)
+
+  30       SERVICE KEY IS NOT REGISTERED ERROR.        등록되지 않은 서비스키
+
+  31       DEADLINE HAS EXPIRED ERROR.                 기한 만료된 서비스키
+
+  32       UNREGISTERED IP ERROR.                      등록되지 않은 IP 주소
+
+  99       UNKNOWN ERROR.                              기타 에러
+
+
+
+
+                                             - 12 -
+

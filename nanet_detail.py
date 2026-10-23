@@ -1,13 +1,14 @@
 """국회도서관 상세페이지에서 **공개적으로 표시된 서지정보만** 선택적으로 보완.
 
-이 파일은 자동 크롤러가 아닙니다. 사용자가 '제목 보완 시도'를 누른 소수의
-관리번호에만 접근합니다. 로그인·CAPTCHA·차단을 우회하지 않으며, 원문 PDF를
+검색 시 누락 정보가 있는 소수 자료(검색당 최대 5건)만 보완합니다.
+접근 정책 확인과 세션별 캐시는 nanet_enrich.py에서 적용합니다. 로그인·CAPTCHA·차단을 우회하지 않으며, 원문 PDF를
 다운로드하지 않습니다. 국회도서관의 HTML 구조가 바뀌면 미보완으로 남깁니다.
 """
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
+from nanet_metadata import clean_text, control_number
 
 import requests
 from bs4 import BeautifulSoup
@@ -55,22 +56,34 @@ def parse_nanet_detail_html(source: str | bytes) -> dict[str, str]:
         meta = soup.select_one(key)
         if meta and meta.get("content"):
             title_candidates.append(meta.get("content"))
-    for selector in ('h1', 'h2', 'h3', 'h4', '[class*="detailTitle"]', '[class*="detail_tit"]'):
+    for selector in ('[class*="detailTitle"]', '[class*="detail_tit"]', 'h3', 'h2', 'h1', 'h4'):
         for element in soup.select(selector)[:15]:
             title_candidates.append(_text(element))
     name = ""
     for candidate in title_candidates:
         candidate = clean_paper_title(candidate)
+        candidate = re.sub(r"^(?:국내기사|국외기사|학위논문|일반도서)\s+", "", candidate)
         candidate = re.sub(r"\s*[\-|]\s*(국회도서관|국회전자도서관)\s*$", "", candidate).strip()
         if 6 <= len(candidate) <= 500 and not any(
             bad == candidate or candidate.startswith(bad + " ")
-            for bad in ("국회도서관", "국회전자도서관", "자료 검색", "외부기관 자료", "상세보기", "검색 결과", "목록으로")
+            for bad in ("국회도서관", "국회전자도서관", "자료 검색", "외부기관 자료", "상세보기", "검색 결과", "목록으로", "로그인", "접근 제한", "접근차단", "오류", "서비스 점검", "보안 확인", "Access Denied", "Forbidden")
         ):
             name = candidate
             break
     author = _field_from_document(soup, ("저자명", "저자사항", "저자"))
     published = _field_from_document(soup, ("발행사항", "발행정보", "발행처"))
     journal = _field_from_document(soup, ("수록지명", "게재지", "학술지명"))
+    # Only labels in the actual detail heading/table are candidates for document type.
+    explicit_type = _field_from_document(soup, ("자료유형", "자료구분", "자료종류"))
+    if not explicit_type:
+        for badge in soup.select('[class*="detailTitle"] span, [class*="detail_tit"] span, h3 span, h2 span'):
+            if _text(badge) in ("국내기사", "국외기사", "국내학술기사", "국외학술기사", "학위논문", "일반도서"):
+                explicit_type = _text(badge)
+                break
+    degree = _field_from_document(soup, ("학위논문사항", "학위사항", "학위구분"))
+    if not any((author, published, journal, degree, explicit_type)):
+        # Do not mistake a login or navigation heading for a bibliographic title.
+        name = ""
     dates = re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", published)
     return {
         "자료명/저자사항": (f"{name} / {author}" if name and author else name),
@@ -78,6 +91,9 @@ def parse_nanet_detail_html(source: str | bytes) -> dict[str, str]:
         "발행자": published,
         "발행년": dates[-1] if dates else "",
         "수록지명": journal,
+        "상세자료유형": explicit_type,
+        "학위사항": degree,
+        "발행사항": published,
     }
 
 
@@ -108,7 +124,19 @@ def fetch_nanet_detail_metadata(controlno: str, session=None) -> dict[str, str]:
     target = urlsplit(response.url)
     if target.scheme != "https" or target.hostname != "dl.nanet.go.kr":
         raise MetadataLookupError("국회도서관 공식 도메인이 아닌 응답은 사용하지 않습니다.")
+    # Reject an explicitly mismatched control number rather than overwriting another record.
+    expected = control_number(controlno)
+    returned = parse_qs(target.query).get("controlNo", [""])[0]
+    if returned and control_number(returned) != expected:
+        raise MetadataLookupError("응답의 관리번호가 요청한 자료와 다릅니다.")
+    document = BeautifulSoup(content, "html.parser")
+    canonical = document.select_one('link[rel="canonical"]')
+    if canonical and canonical.get("href"):
+        canonical_id = parse_qs(urlsplit(canonical["href"]).query).get("controlNo", [""])[0]
+        if canonical_id and control_number(canonical_id) != expected:
+            raise MetadataLookupError("상세페이지의 관리번호가 다른 자료를 가리킵니다.")
     metadata = parse_nanet_detail_html(content)
     if not metadata["자료명/저자사항"]:
         raise MetadataLookupError("상세페이지에서 제목을 자동 추출하지 못했습니다. 링크를 열어 직접 확인하세요.")
+    metadata["보완출처"] = url
     return metadata

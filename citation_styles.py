@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import re
 from typing import Mapping
+from nanet_metadata import classify_record, canonicalize_record
 
 JOURNAL = "학술지 논문"
 THESIS = "석사·박사 학위논문"
@@ -87,6 +88,12 @@ def _parse_journal_details(raw: str) -> dict[str, str]:
 
 def guess_reference_type(row: Mapping) -> str:
     """자료유형을 명시적 서지 분류로만 판단; 모호하면 미확인 유지."""
+    decision = classify_record(row)
+    if decision.status == "충돌":
+        return UNKNOWN
+    grouped = {"학위논문": THESIS, "학술기사": JOURNAL, "도서자료": BOOK}
+    if decision.category in grouped:
+        return grouped[decision.category]
     kind = _first(row, "자료유형", "DB", "document_type").lower()
     if any(token in kind for token in ("학위논문", "석사학위", "박사학위")):
         return THESIS
@@ -115,13 +122,14 @@ def _parse_combined_title_and_author(combined: str) -> tuple[str, str]:
 
 def suggested_citation(row: Mapping) -> dict[str, str]:
     """API에서 확인된 서지정보로만 초기값 제안. 누락 정보는 사용자 편집 대상으로 둠."""
+    row = canonicalize_record(row)
     combined = _first(row, "자료명/저자사항", "제목", "논문제목", "title")
     title, author_from_combined = _parse_combined_title_and_author(combined)
     year = _first(row, "발행년", "발행연도", "year")
     date_value = _first(row, "발행 연월", "발행연월", "학위수여 연월", "date")
     if not date_value:
         date_value = _parse_bibliographic_date(
-            _first(row, "발행자", "발행사항", "publisher"),
+            _first(row, "발행사항", "발행자", "publisher"),
             _first(row, "수록지명", "학술지명", "journal"),
         )
     if not date_value and year:
@@ -130,6 +138,12 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
     kind = guess_reference_type(row)
     journal_data = _parse_journal_details(_first(row, "수록지명", "학술지명", "journal"))
     degree = _first(row, "학위종류", "degree_type")
+    if not degree:
+        note = _first(row, "학위사항", "학위구분")
+        if "박사" in note:
+            degree = "박사학위논문"
+        elif "석사" in note:
+            degree = "석사학위논문"
     if not degree:
         raw_type = _first(row, "DB", "자료유형")
         if "박사" in raw_type:
@@ -141,6 +155,12 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
         # '서울 : 출판사, 2026' -> '출판사': 원문에 적힌 부분만 사용합니다.
         publisher = re.sub(r"^.{1,25}?\s*:\s*", "", publisher)
         publisher = re.sub(r",?\s*(?:19|20)\d{2}(?:[.\-/]\s*\d{1,2})*(?:\s*[.]?\s*\d{1,2})?\s*$", "", publisher).strip(" ,")
+    university = _first(row, "학위수여 대학·대학원", "학위수여기관", "수여대학", "university")
+    if kind == THESIS and not university:
+        stated = _first(row, "발행자", "발행사항")
+        if "대학" in stated:
+            university = re.sub(r"^.{1,25}?\s*:\s*", "", stated)
+            university = re.sub(r",?\s*(?:19|20)\d{2}.*$", "", university).strip(" ,.")
     return {
         "type": kind,
         "author": _first(row, "저자", "저자명", "author") or author_from_combined,
@@ -152,7 +172,7 @@ def suggested_citation(row: Mapping) -> dict[str, str]:
         "pages": _first(row, "수록 페이지", "페이지", "pages") or journal_data["pages"],
         "doi": _first(row, "DOI", "doi"),
         "degree": degree,
-        "university": _first(row, "학위수여 대학·대학원", "학위수여기관", "수여대학", "university"),
+        "university": university,
         "publisher": publisher,
         "report_number": _first(row, "보고서 번호", "보고서번호", "report_number"),
         "url": _first(row, "원문URL", "원문링크", "URL", "url"),
