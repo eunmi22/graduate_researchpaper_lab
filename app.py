@@ -1,4 +1,4 @@
-"""대학원 AI 논문 연구 도우미 v2.3.4-P0 — 6단계 통합 Streamlit 앱.
+"""대학원 AI 논문 연구 도우미 v2.3.5-P0-ID — 6단계 통합 Streamlit 앱.
 
 실행: python -m streamlit run app.py
 관리자: DATA_GO_KR_API_KEY / 선택 RISS_API_URL·RISS_API_KEY → .env 또는 Cloud Secrets.
@@ -21,11 +21,12 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from legacy_views_v22 import (
-    admin_api_key, render_search_controls, render_university_theses,
-    render_riss_controls, render_external_controls, render_search_results,
+    admin_api_key, render_university_theses,
+    render_riss_controls, render_external_controls,
     render_ai_summary, render_trends, render_riss, render_sources,
     render_submission,
 )
+from p0_search_ui import UI_BUILD, render_search_controls, render_search_results
 from research_workspace import export_snapshot
 from v23_screens import (
     render_reading, render_literature, render_direction,
@@ -34,9 +35,13 @@ from v23_screens import (
 
 load_dotenv()
 st.set_page_config(
-    page_title='대학원 AI 논문 연구 도우미 v2.3.4-P0', page_icon='🎓',
+    page_title='대학원 AI 논문 연구 도우미 v2.3.5-P0-ID', page_icon='🎓',
     layout='wide', initial_sidebar_state='expanded',
 )
+if UI_BUILD != "2.3.5-P0-ID":
+    st.error("실행 파일과 검색 화면의 버전이 다릅니다. 새 폴더에 전체 ZIP을 풀고 다시 실행하세요.")
+    st.stop()
+
 st.markdown('''
 <style>
 .block-container{padding-top:1.4rem;max-width:1560px}
@@ -57,7 +62,7 @@ MENUS = [
 
 with st.sidebar:
     st.title('🎓 논문 연구 도우미')
-    st.caption('v2.3.4-P0 · 논문 검색부터 나의 학위논문까지')
+    st.caption('v2.3.5-P0-ID · 논문 검색부터 나의 학위논문까지')
     selected_menu = st.radio('연구 진행 단계', MENUS, key='v23_main_menu')
     st.divider()
     st.subheader('🤖 개인 AI 설정')
@@ -98,14 +103,14 @@ with st.sidebar:
 
 st.title('🎓 대학원 AI 논문 연구 도우미')
 st.caption('자료 찾기 → 논문 읽기 → 선행연구 분석 → 연구 방향·계획 → 연구 수행·분석 → 내 논문 작성')
-st.caption('v2.3.4-P0 · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
+st.caption('v2.3.5-P0-ID · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
 
 if selected_menu == MENUS[0]:
     st.header('01. 자료 찾기')
     # 국회도서관/대학별 검색은 서로 다른 탭으로 표시합니다. 기존 RISS·동향 등은 보조 탭에 보존.
     tabs = st.tabs(['국회도서관 논문 검색', '대학 학위논문 검색', '기타 자료·통계'])
     with tabs[0]:
-        render_search_controls()
+        render_search_controls(admin_api_key())
         render_search_results(admin_api_key())
     with tabs[1]:
         render_university_theses()

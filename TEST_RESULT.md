@@ -1,29 +1,20 @@
-# P0 검증 결과 — 2.3.4-P0
+# Verification: v2.3.5-P0-ID
 
-## 실제 수행한 검사
+- Baseline regression: 175 passed, 1 skipped.
+- Updated test suite: 203 passed, 1 skipped.
+- New identification/selector regression cases: 28.
+- verify_id.ipynb: 10 code cells executed, including 5 separate assert cells.
+- Python compileall: passed.
+- Identifier normalization tested for alternate field names, copied whitespace/zero-width characters, and conflicting identifiers.
+- Mock UI checks: unknown-list column order, readable selection labels, exact control-number links, filtering, and old-session migration.
+- Sorting/classification test with 263 SYNTHETIC records: passed. These are not the user's actual API records.
+- No personal API keys were supplied or used. No research-note/AI prompt/report-generation modules were rewritten.
 
-| 검사 | 결과 | 의미 |
-|---|---|---|
-| 변경 전 기준본 | 123개 통과 | paper_v233.zip 기준의 기존 회귀 검사 |
-| 수정 후 자동 검사 | 175개 통과, 1개 건너뜀 | 파싱·분류·정렬·부분 실패·중복·기존 기능 검증 |
-| Jupyter 노트북 | 코드 셀 14개 실행, 별도 assert 검증 셀 7개 통과 | 실제 API 호출 없이 가상 자료 사용 |
-| Python 구문 검사 | 성공 | 프로젝트 Python 파일 compileall |
-| 검색 UI 제어 | 모의 Streamlit으로 상태 전환/선택 보존/오류 처리 시험 | 실제 브라우저 렌더링 검사 아님 |
-| 주요 기존 모듈 보존 | 11개 파일이 기준본과 바이트 단위 동일 | 원문 분석·AI·보고서·연구 작업·RISS·외부검색 등 |
+## Not verified
 
-기존 수동분류·자동 검색어 확대·UI 함수 위치에 의존하던 테스트 16개는 새 요구사항에 맞게 기대값을 수정했습니다. 기존 123개에 P0 검증 52개가 추가되어 총 175개가 통과했습니다. 테스트를 삭제해 오류를 숨긴 것이 아니며, 변경된 기대값은 tests 파일에서 확인할 수 있습니다.
+- Live National Assembly Library API search with the user's credentials.
+- Classification of the user's actual 263 records.
+- Real Streamlit browser rendering or the user's local/Cloud deployment.
+- The existing Streamlit AppTest was skipped because Streamlit is not installed. Installing it was attempted but package download failed due to unavailable network/DNS.
 
-## 수행하지 못한 검사
-
-개발 실행 환경에는 Streamlit과 OpenAI SDK가 설치되어 있지 않고 외부 패키지 설치가 제한되어 있습니다. 기존 AI 테스트는 모의 호출을 사용합니다. Streamlit AppTest는 설치 부재로 1개 모듈이 건너뛰어졌습니다. 실제 브라우저, 사용자 인증키에 의한 국회도서관 요청, 실제 OpenAI 요약, GitHub/Community Cloud 배포는 검증하지 않았습니다.
-
-따라서 전체 P0 운영 완료가 아니라 **P0 코드/오프라인 검증 완료, 운영 검수 대기**입니다. `P0_GUIDE.md`의 검수 항목을 통과한 후 P1로 진행합니다.
-
-## 재실행
-
-```cmd
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
-```
-
-Streamlit이 설치된 환경에서는 AppTest 검사도 실행됩니다. 이 경우에도 AppTest는 실제 브라우저에서 화면을 보는 작업과는 다릅니다. 실제 인증키 검색은 별도의 `check_live.py`와 웹 화면으로 확인하세요.
+The current screenshot's manual-classification form matches text in archived 2.3.2/2.3.3 sources; it is absent from the retained 2.3.4-P0 archive. This does not establish which local file/Cloud branch the user is executing. The new direct entrypoint, visible build ID, and check_install.py are provided to verify that.

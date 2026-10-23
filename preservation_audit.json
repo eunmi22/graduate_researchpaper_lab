@@ -1,48 +1,34 @@
 {
-  "protected_modules_byte_identical": {
-    "v23_screens.py": true,
-    "research_workspace.py": true,
-    "research_ai.py": true,
-    "pdf_analysis.py": true,
-    "reporting.py": true,
-    "prompt_templates.py": true,
-    "reading_premap.py": true,
-    "riss_catalog.py": true,
-    "external_research.py": true,
-    "dcollection_fallback.py": true,
-    "ui_helpers.py": true
-  },
-  "legacy_functions_changed": [
-    "render_search_controls",
-    "render_search_results",
-    "render_ai_summary"
-  ],
-  "legacy_functions_removed": [
-    "_render_catalog_group",
-    "_promote_unverified_record",
-    "_apply_metadata_to_catalog"
-  ],
-  "changed_or_added_python_files": [
-    "nanet_detail.py",
+  "baseline": "paper.zip / 2.3.4-P0",
+  "current": "2.3.5-P0-ID",
+  "unchanged_python_modules": [
     "check_live.py",
-    "nanet_metadata.py",
+    "citation_styles.py",
+    "dcollection_fallback.py",
+    "external_research.py",
+    "generate_examples.py",
     "legacy_views_v22.py",
+    "nanet_detail.py",
     "nanet_enrich.py",
-    "p0_search_ui.py",
     "nanet_search_flow.py",
     "paperlab.py",
+    "pdf_analysis.py",
+    "prompt_templates.py",
+    "reading_premap.py",
+    "reporting.py",
+    "research_ai.py",
+    "research_workspace.py",
+    "riss_catalog.py",
+    "ui_helpers.py",
+    "v23_screens.py"
+  ],
+  "modified_python_modules": [
     "app.py",
-    "citation_styles.py",
-    "tests/test_v233_sort_catalog.py",
-    "tests/test_filter_fix.py",
-    "tests/test_fulltext_links.py",
-    "tests/test_external_research.py",
-    "tests/test_v231_nanet_fixes.py",
-    "tests/test_dcollection_fallback.py",
-    "tests/test_p0_ui_state.py",
-    "tests/test_layout.py",
-    "tests/test_p0_search.py",
-    "tests/test_v232_search_regression.py",
-    "tests/test_p0_streamlit.py"
+    "nanet_metadata.py",
+    "p0_search_ui.py"
+  ],
+  "added_python_modules": [
+    "catalog_identity.py",
+    "check_install.py"
   ]
 }

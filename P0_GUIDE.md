@@ -28,7 +28,7 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-키는 기존 `.env`의 `DATA_GO_KR_API_KEY`에서 불러옵니다. 실제 키가 담긴 파일을 GitHub나 채팅에 올리지 마세요. 페이지 위의 **v2.3.4-P0** 표시가 새 버전의 확인 기준입니다.
+키는 기존 `.env`의 `DATA_GO_KR_API_KEY`에서 불러옵니다. 실제 키가 담긴 파일을 GitHub나 채팅에 올리지 마세요. 페이지 위의 **v2.3.5-P0-ID** 표시가 새 버전의 확인 기준입니다.
 
 ## 3. P0 변경 내용
 
@@ -82,3 +82,6 @@ python -m streamlit run app.py
 `API 검색 진단`에서 `검색 진단 JSON`을 내려받고 화면을 함께 확인하세요. 원문 XML 전체와 요청 URL, 인증키는 공유하지 마세요. 키 없는 진단에도 검색어가 포함되므로 민감한 주제는 가린 후 공유하세요.
 
 운영 검색 확인을 마친 뒤 P1을 진행하며, P2는 P1 과제 산출물과 데이터 연결까지 검수한 다음 진행합니다. 공통 논문 ID·참고문헌·노트 구조는 함께 설계해도 되지만 실제 기능 배포는 나누는 것이 이번 프로젝트의 기준입니다.
+
+
+See ID_GUIDE.md for catalogue identification and source-file checks.

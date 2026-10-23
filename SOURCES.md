@@ -17,3 +17,10 @@
 사용자의 실제 API 원응답과 승인 키가 없으므로 실제 제목 누락이 어느 XML 변형에서 발생했는지, 공식 웹과 결과 목록이 얼마나 일치하는지 확정하지 않았습니다. 자동 보완은 공개 상세정보 접근과 HTML 구조에 영향을 받습니다. 실제 사이트에서 검색·보완이 반드시 성공한다고 보장하지 않습니다.
 
 본 패키지는 웹사이트와 API가 동일한 관련도 정렬을 제공한다고 가정하지 않습니다. API 순번과 앱 유형 우선 순번을 분리해서 보여줍니다. 261건은 이전 사용자 화면의 관측값이며 현재 API 건수로 고정하지 않습니다.
+
+
+## Identification update
+
+User screenshot: identifier-only selector and unreadable unknown catalogue.
+Streamlit selectbox display labels can differ from returned option values: https://docs.streamlit.io/develop/api-reference/widgets/st.selectbox
+The UI displays metadata but selects by a stable internal identifier. This update does not add new library identifier-prefix rules.

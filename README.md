@@ -1,4 +1,8 @@
-# 대학원 AI 논문 연구 도우미 — 2.3.4-P0
+# v2.3.5-P0-ID
+
+See **ID_GUIDE.md** for the current update. Run `python check_install.py` before starting.
+
+# 대학원 AI 논문 연구 도우미 — 2.3.5-P0-ID
 
 ## 이번 배포의 범위
 

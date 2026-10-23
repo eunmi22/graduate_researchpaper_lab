@@ -12,19 +12,34 @@ from nanet_search_flow import (
 )
 from nanet_enrich import enrich_catalog
 from citation_styles import suggested_citation, format_reference
+from catalog_identity import (
+    identity_rows, identity_table, filter_identities, ROWKEY,
+    CONTROL, TITLE, AUTHOR, YEAR, PUBLISHER, KIND, REASON, LINK, REFERENCE,
+)
 
-STATE_VERSION = "p0-1"
+
+UI_BUILD = "2.3.5-P0-ID"
+STATE_VERSION = "p0-2-id"
 
 
 def _initialize():
-    if st.session_state.get("p0_state_version") != STATE_VERSION:
-        # In-memory search cache from an old schema must not hide the corrected parser.
-        for key in ("catalog_df", "paper_df", "unverified_df", "books_df", "filtered_df", "catalog_filtered_df"):
-            st.session_state[key] = pd.DataFrame()
+    if st.session_state.get("p0_state_version") == STATE_VERSION:
+        return
+    # Re-normalize old in-session search records instead of discarding them.
+    catalog = st.session_state.get("catalog_df", pd.DataFrame())
+    if not isinstance(catalog, pd.DataFrame) or catalog.empty:
+        older = [st.session_state.get(k) for k in ("paper_df", "unverified_df", "books_df")]
+        older = [f for f in older if isinstance(f, pd.DataFrame) and not f.empty]
+        catalog = pd.concat(older, ignore_index=True) if older else pd.DataFrame()
+    _set_catalog(catalog)
+    if catalog.empty:
         for key in ("search_notice", "search_attempts", "xml_diagnostics", "selected_idx", "saved_selected_idx"):
             st.session_state.pop(key, None)
         st.session_state.total_count = 0
-        st.session_state.p0_state_version = STATE_VERSION
+    else:
+        st.session_state.p0_migrated_rows = len(catalog)
+    # Preserve research notes, PDF evidence, personal settings and pagination state.
+    st.session_state.p0_state_version = STATE_VERSION
 
 
 def _set_catalog(frame: pd.DataFrame):
@@ -214,18 +229,80 @@ def _show_group(frame: pd.DataFrame, heading: str):
     if frame.empty:
         st.caption("현재 수집한 페이지에는 이 유형의 자료가 없습니다.")
         return
+    # Reuse links on imported old results without creating duplicate columns.
+    frame = frame.drop(columns=["국회도서관 상세·원문 확인", "공개본 검색"], errors="ignore")
     display = add_access_links(frame)
-    display["정식 참고문헌"] = [format_reference(suggested_citation(r)) for r in frame.to_dict("records")]
-    display["자료명/저자사항"] = display["자료명/저자사항"].map(lambda x: clean_text(x) or "제목 미확인 — 공식 상세정보 확인")
-    cols = [c for c in ("자료명/저자사항", "저자", "국회도서관 상세·원문 확인", "발행자", "발행년",
-                       "수록지명", "정식 참고문헌", "분류출처", "API순번") if c in display]
-    st.dataframe(display[cols], hide_index=True, use_container_width=True,
-        column_config={"자료명/저자사항": st.column_config.TextColumn("제목 / 저자사항", width="large"),
-            "정식 참고문헌": st.column_config.TextColumn("정식 참고문헌", width="large"),
-            "국회도서관 상세·원문 확인": st.column_config.LinkColumn("공식 상세정보", display_text="국회도서관에서 열기 ↗")})
+    display = identity_table(display)
+    st.dataframe(display, hide_index=True, use_container_width=True,
+        column_config={
+            CONTROL: st.column_config.TextColumn(CONTROL, width="medium"),
+            TITLE: st.column_config.TextColumn("제목 / 저자사항", width="large"),
+            AUTHOR: st.column_config.TextColumn(AUTHOR, width="medium"),
+            REASON: st.column_config.TextColumn(REASON, width="large"),
+            REFERENCE: st.column_config.TextColumn(REFERENCE, width="large"),
+            LINK: st.column_config.LinkColumn(LINK, display_text="국회도서관에서 열기 ↗"),
+        })
+
+
+def _choose_identity(items: list[dict], *, widget_key: str, memory_key: str, label: str):
+    """Use a stable ID as the value, not a possibly duplicated title or row number."""
+    mapping = {item[ROWKEY]: item for item in items}
+    options = list(mapping)
+    if not options:
+        return None
+    current = st.session_state.get(widget_key, st.session_state.get(memory_key))
+    if current not in mapping:
+        remembered = st.session_state.get(memory_key)
+        current = remembered if remembered in mapping else options[0]
+    st.session_state[widget_key] = current
+    chosen = st.selectbox(label, options, key=widget_key,
+        format_func=lambda value: mapping[value]["label"],
+        help="관리번호 | 제목 | 저자 | 발행연도로 표시합니다. 같은 제목도 관리번호로 구분합니다.")
+    st.session_state[memory_key] = chosen
+    return mapping[chosen]
+
+
+def _inspect_pending(frame: pd.DataFrame):
+    st.caption("자동분류 근거가 부족하거나 충돌한 자료만 보여줍니다. 수동 유형 선택·확인 체크는 필요하지 않습니다.")
+    query = st.text_input("목록에서 찾기 (관리번호·제목·저자·발행처)", key="p0_pending_query")
+    items = filter_identities(identity_rows(frame), query)
+    st.caption(f"미확인 자료 {len(frame):,}건 중 현재 표시 {len(items):,}건")
+    if not items:
+        st.info("입력한 관리번호나 제목과 일치하는 자료가 없습니다.")
+        return
+    subset = pd.DataFrame([item["record"] for item in items])
+    _show_group(subset, "4. 자료유형 미확인")
+    selected = _choose_identity(items, widget_key="p0_pending_select", memory_key="p0_pending_selected",
+        label="확인할 자료 선택 (관리번호·제목·저자·연도)")
+    if selected is None:
+        return
+    st.markdown("**선택한 자료의 전체 정보**")
+    for field in (CONTROL, TITLE, AUTHOR, YEAR, PUBLISHER, KIND, REASON):
+        st.write(f"{field}: {selected[field]}")
+    st.markdown("**정식 참고문헌**")
+    st.write(selected[REFERENCE])
+    if selected[LINK]:
+        st.link_button("선택한 자료의 공식 상세정보 열기", selected[LINK])
+        if st.button("선택 자료 공개 서지정보 자동 보완", key="p0_pending_enrich"):
+            cache = st.session_state.setdefault("p0_metadata_cache", {})
+            result = enrich_catalog(pd.DataFrame([selected["record"]]), cache=cache, limit=1)
+            catalog = st.session_state.get("catalog_df", pd.DataFrame())
+            _, _, _, merged = merge_catalog_pages(catalog, result.data)
+            _set_catalog(merged)
+            st.session_state.p0_identity_notice = (
+                f"선택 자료 자동 보완: 요청 {result.attempted}건, 변경 {result.changed}건. "
+                + (" / ".join(result.errors) if result.errors else "확인된 공개 정보만 반영했습니다.")
+            )
+            st.rerun()
+    else:
+        st.info("공식 관리번호가 확인되지 않아 다른 자료로 잘못 연결하지 않도록 상세링크를 만들지 않았습니다.")
 
 
 def render_search_results(admin_key: str):
+    _initialize()
+    st.caption(f"검색 화면 빌드: {UI_BUILD} | 관리번호·제목 함께 표시 | 수동 분류 폼 없음")
+    if st.session_state.get("p0_identity_notice"):
+        st.info(st.session_state.pop("p0_identity_notice"))
     st.subheader("📋 검색 결과 — 학위논문 → 학술기사 → 도서자료")
     notice = st.session_state.get("search_notice")
     if notice:
@@ -253,16 +330,16 @@ def render_search_results(admin_key: str):
         pending = catalog[classes.eq(UNKNOWN)]
         if not pending.empty:
             with st.expander(f"⚠ 자료유형 미확인 목록 ({len(pending)}건) — 근거 부족·충돌만 표시", expanded=False):
-                _show_group(pending, "4. 자료유형 미확인")
-                st.dataframe(pending[["controlno", "분류상태", "분류근거"]], hide_index=True)
-                st.caption("모든 자료를 직접 분류할 필요가 없습니다. 이 목록만 자동분류 근거가 부족하거나 충돌합니다.")
+                _inspect_pending(pending)
         papers = st.session_state.get("paper_df", pd.DataFrame())
         eligible = papers[papers["controlno"].map(bool)] if not papers.empty else papers
         if not eligible.empty:
-            controls = eligible["controlno"].tolist()
-            labels = {r["controlno"]: clean_text(r["자료명/저자사항"]) or r["controlno"] for r in eligible.to_dict("records")}
-            selected = st.selectbox("읽을 논문 선택", controls, format_func=lambda x: labels[x], key="p0_read_control")
-            st.button("📖 선택 논문을 02. 논문 읽기로 보내기", on_click=_go_reading, args=(selected,), key="p0_to_reading")
+            item = _choose_identity(identity_rows(eligible), widget_key="p0_read_control", memory_key="p0_read_selected",
+                label="읽을 논문 선택 (관리번호·제목·저자·연도)")
+            if item is not None:
+                st.write(f"선택 논문: {item[TITLE]}")
+                selected = control_number(item["record"])
+                st.button("📖 선택 논문을 02. 논문 읽기로 보내기", on_click=_go_reading, args=(selected,), key="p0_to_reading")
         st.caption("학술기사 분류는 동료심사 여부를 보증하지 않습니다. 도서자료는 논문 선택 목록에 전달하지 않습니다.")
         enrichment = st.session_state.get("p0_enrichment", {})
         if enrichment:
@@ -304,6 +381,9 @@ def render_search_results(admin_key: str):
                     st.caption("표본 포함률은 입력한 관리번호 중 현재 수집 목록에 있는 비율입니다. 전체 결과 동일성이나 검색 재현율이 아닙니다.")
             report = {"version": STATE_VERSION, "query": st.session_state.get("search_used_keyword", ""),
                 "field": st.session_state.get("search_field", ""), "api_total": st.session_state.get("total_count", 0),
-                "collected": len(catalog), "pages": diagnostics, "errors": st.session_state.get("search_errors", [])}
-            st.download_button("키를 제외한 검색 진단 JSON", json.dumps(report, ensure_ascii=False, indent=2),
+                "collected": len(catalog), "pages": diagnostics, "errors": st.session_state.get("search_errors", []),
+                "ui_build": UI_BUILD,
+                "record_identification": identity_table(catalog).fillna("").to_dict("records")}
+            st.caption("진단 JSON에는 관리번호·제목·분류 근거가 포함됩니다. 민감한 검색어나 자료가 있으면 공유 전 확인하세요.")
+            st.download_button("키를 제외한 검색 진단 JSON", json.dumps(report, ensure_ascii=False, indent=2, default=str),
                                file_name="search_diag.json", mime="application/json", key="p0_diag_download")

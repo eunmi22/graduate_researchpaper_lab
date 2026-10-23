@@ -7,6 +7,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import unicodedata
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -68,7 +69,7 @@ def canonical_field(name: str) -> str:
     raw = clean_text(name)
     simple = re.sub(r"[\s_\-./／:()（）·]", "", raw).lower()
     groups = {
-        "controlno": ("controlno", "controlnumber", "제어번호", "관리번호"),
+        "controlno": ("controlno", "controlnumber", "제어번호", "관리번호", "자료관리번호"),
         "DB": ("db", "dbname", "database", "자료유형", "자료구분", "자료종류", "materialtype", "documenttype"),
         "자료명/저자사항": (
             "자료명저자사항", "자료명저자", "자료명저자명", "자료명및저자사항", "제목저자사항", "제목저자",
@@ -109,15 +110,21 @@ def canonicalize_record(row: Mapping) -> dict:
     return result
 
 def control_number(row_or_value) -> str:
+    """Read recognized identifier aliases; reject conflicting valid identifiers."""
     if isinstance(row_or_value, (Mapping, pd.Series)):
-        raw = next((clean_text(row_or_value.get(k)) for k in ("controlno", "controlNo", "제어번호", "관리번호")
-                    if clean_text(row_or_value.get(k))), "")
+        if clean_text(row_or_value.get("관리번호 충돌")):
+            return ""
+        values = [v for k, v in row_or_value.items() if canonical_field(str(k)) == "controlno"]
     else:
-        raw = clean_text(row_or_value)
-    # Empty or ambiguous identifiers must not be merged or used to fetch a different record.
-    if not re.fullmatch(r"[A-Za-z0-9_-]{4,80}", raw):
-        return ""
-    return raw.upper()
+        values = [row_or_value]
+    found = []
+    for value in values:
+        raw = unicodedata.normalize("NFKC", clean_text(value))
+        raw = "".join(c for c in raw if unicodedata.category(c) != "Cf").strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]{4,80}", raw):
+            found.append(raw.upper())
+    distinct = set(found)
+    return next(iter(distinct)) if len(distinct) == 1 else ""
 
 def _explicit_type(value: str) -> str:
     text = clean_text(value).replace(" ", "").lower()
@@ -174,6 +181,11 @@ def normalize_record(row: Mapping) -> dict:
     result = canonicalize_record(row)
     for key in ("자료명/저자사항", "저자", "발행자", "발행년", "DB", "controlno"):
         result.setdefault(key, "")
+    raw_controls = [clean_text(v) for k, v in result.items() if canonical_field(str(k)) == "controlno" and clean_text(v)]
+    result.setdefault("관리번호 원문", " | ".join(dict.fromkeys(raw_controls)))
+    valid_controls = {control_number(value) for value in raw_controls if control_number(value)}
+    if len(valid_controls) > 1:
+        result["관리번호 충돌"] = " | ".join(sorted(valid_controls))
     result["controlno"] = control_number(result)
     # Keep DB unmodified: inferred category must not become fake API metadata.
     decision = classify_record(result)
