@@ -1,3 +1,11 @@
+# 최신 실행 버전: v2.3.6-P0-UI
+
+**먼저 `UI_GUIDE.md`를 확인하세요.** 정상 검색·자동분류는 유지하며 대분류별 선택창과 사용 절차 안내를 개선했습니다. 아래는 기존 기능 설명입니다. 화면·설치 버전의 기준은 이 머리말과 VERSION, manifest.json입니다.
+
+`주제 검색 → 대분류 선택 → 세부 자료 선택·상세 확인 → 02 논문 읽기`
+
+전체 ZIP을 새 폴더에 풀고 `python check_install.py`로 소스 일치를 확인하세요. 검증 노트북은 `verify_ui.ipynb`입니다.
+
 # v2.3.5-P0-ID
 
 See **ID_GUIDE.md** for the current update. Run `python check_install.py` before starting.

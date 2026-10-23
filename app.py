@@ -1,4 +1,4 @@
-"""대학원 AI 논문 연구 도우미 v2.3.5-P0-ID — 6단계 통합 Streamlit 앱.
+"""대학원 AI 논문 연구 도우미 v2.3.6-P0-UI — 6단계 통합 Streamlit 앱.
 
 실행: python -m streamlit run app.py
 관리자: DATA_GO_KR_API_KEY / 선택 RISS_API_URL·RISS_API_KEY → .env 또는 Cloud Secrets.
@@ -35,10 +35,10 @@ from v23_screens import (
 
 load_dotenv()
 st.set_page_config(
-    page_title='대학원 AI 논문 연구 도우미 v2.3.5-P0-ID', page_icon='🎓',
+    page_title='대학원 AI 논문 연구 도우미 v2.3.6-P0-UI', page_icon='🎓',
     layout='wide', initial_sidebar_state='expanded',
 )
-if UI_BUILD != "2.3.5-P0-ID":
+if UI_BUILD != "2.3.6-P0-UI":
     st.error("실행 파일과 검색 화면의 버전이 다릅니다. 새 폴더에 전체 ZIP을 풀고 다시 실행하세요.")
     st.stop()
 
@@ -62,7 +62,7 @@ MENUS = [
 
 with st.sidebar:
     st.title('🎓 논문 연구 도우미')
-    st.caption('v2.3.5-P0-ID · 논문 검색부터 나의 학위논문까지')
+    st.caption('v2.3.6-P0-UI · 논문 검색부터 나의 학위논문까지')
     selected_menu = st.radio('연구 진행 단계', MENUS, key='v23_main_menu')
     st.divider()
     st.subheader('🤖 개인 AI 설정')
@@ -103,7 +103,7 @@ with st.sidebar:
 
 st.title('🎓 대학원 AI 논문 연구 도우미')
 st.caption('자료 찾기 → 논문 읽기 → 선행연구 분석 → 연구 방향·계획 → 연구 수행·분석 → 내 논문 작성')
-st.caption('v2.3.5-P0-ID · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
+st.caption('v2.3.6-P0-UI · 모든 참고문헌은 자료유형별 정식 표기 · AI 분석과 사용자의 생각·검증 결과를 구분')
 
 if selected_menu == MENUS[0]:
     st.header('01. 자료 찾기')

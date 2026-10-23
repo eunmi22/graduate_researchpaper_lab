@@ -24,7 +24,7 @@ def main() -> int:
         actual=hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
         if actual != expected:
             failed.append(name)
-    for name in ('app.py','p0_search_ui.py','catalog_identity.py','nanet_metadata.py'):
+    for name in ('app.py','p0_search_ui.py','catalog_identity.py','catalog_picker.py','catalog_picker_ui.py','nanet_metadata.py'):
         path=root/name
         short=hashlib.sha256(path.read_bytes()).hexdigest()[:12] if path.exists() else 'MISSING'
         print(name, short)

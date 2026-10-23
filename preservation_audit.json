@@ -1,6 +1,6 @@
 {
-  "baseline": "paper.zip / 2.3.4-P0",
-  "current": "2.3.5-P0-ID",
+  "baseline": "2.3.5-P0-ID",
+  "current": "2.3.6-P0-UI",
   "unchanged_python_modules": [
     "check_live.py",
     "citation_styles.py",
@@ -10,6 +10,7 @@
     "legacy_views_v22.py",
     "nanet_detail.py",
     "nanet_enrich.py",
+    "nanet_metadata.py",
     "nanet_search_flow.py",
     "paperlab.py",
     "pdf_analysis.py",
@@ -24,11 +25,28 @@
   ],
   "modified_python_modules": [
     "app.py",
-    "nanet_metadata.py",
+    "catalog_identity.py",
+    "check_install.py",
     "p0_search_ui.py"
   ],
   "added_python_modules": [
-    "catalog_identity.py",
-    "check_install.py"
-  ]
+    "catalog_picker.py",
+    "catalog_picker_ui.py"
+  ],
+  "protected_source_unchanged": [
+    "paperlab.py",
+    "nanet_metadata.py",
+    "nanet_search_flow.py",
+    "nanet_enrich.py",
+    "nanet_detail.py",
+    "research_ai.py",
+    "pdf_analysis.py",
+    "reporting.py",
+    "citation_styles.py",
+    "research_workspace.py",
+    "v23_screens.py",
+    "legacy_views_v22.py",
+    "requirements.txt"
+  ],
+  "note": "UI changes only; live API and browser verification not performed."
 }

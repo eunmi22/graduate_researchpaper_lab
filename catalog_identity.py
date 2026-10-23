@@ -9,7 +9,7 @@ import json
 import re
 from collections import Counter
 import pandas as pd
-from nanet_metadata import normalize_frame, clean_text, control_number
+from nanet_metadata import normalize_frame, clean_text, control_number, UNKNOWN
 from citation_styles import suggested_citation, format_reference
 from paperlab import nanet_detail_url
 
@@ -66,7 +66,7 @@ def identity_rows(frame: pd.DataFrame) -> list[dict]:
             ROWKEY: row_key, CONTROL: display_id, TITLE: title or MISSING_TITLE,
             AUTHOR: author or '저자 미확인', YEAR: year or '연도 미확인',
             PUBLISHER: publisher or '발행처 미확인',
-            KIND: clean_text(row.get('자료분류')),
+            KIND: clean_text(row.get('자료분류')) or UNKNOWN,
             REASON: clean_text(row.get('분류근거')),
             LINK: nanet_detail_url(ident) if ident else '',
             REFERENCE: format_reference(citation),

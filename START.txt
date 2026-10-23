@@ -1,11 +1,7 @@
-P0 2.3.4-P0
-
-1. Back up the previous folder and .env.
-2. Extract paper.zip into C:\AI\paper (app.py at root).
-3. Copy your private .env locally; never commit it.
-4. In Anaconda Prompt:
-   cd /d C:\AI\paper
-   python -m pip install -r requirements.txt
-   python -m streamlit run app.py
-
-See P0_GUIDE.md (Korean). Live API and browser acceptance checks are pending.
+Build: 2.3.6-P0-UI
+Read UI_GUIDE.md first.
+Extract the full ZIP into a NEW short folder such as C:\AI\paper_ui.
+Copy your .env privately, never to GitHub.
+python -m pip install -r requirements.txt
+python check_install.py
+python -m streamlit run app.py

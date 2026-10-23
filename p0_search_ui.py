@@ -12,13 +12,15 @@ from nanet_search_flow import (
 )
 from nanet_enrich import enrich_catalog
 from citation_styles import suggested_citation, format_reference
+from catalog_picker import clear_picker
+from catalog_picker_ui import render_search_guide, render_catalog_picker
 from catalog_identity import (
     identity_rows, identity_table, filter_identities, ROWKEY,
     CONTROL, TITLE, AUTHOR, YEAR, PUBLISHER, KIND, REASON, LINK, REFERENCE,
 )
 
 
-UI_BUILD = "2.3.5-P0-ID"
+UI_BUILD = "2.3.6-P0-UI"
 STATE_VERSION = "p0-2-id"
 
 
@@ -83,6 +85,7 @@ def _enrich(frame: pd.DataFrame):
 
 
 def _clear_search():
+    clear_picker(st.session_state)
     _set_catalog(pd.DataFrame())
     for key in ("selected_idx", "saved_selected_idx", "summary_result", "summary_context"):
         st.session_state.pop(key, None)
@@ -101,6 +104,7 @@ def _clear_search():
 
 def render_search_controls(admin_key: str):
     _initialize()
+    render_search_guide(st)
     st.subheader("🔎 국회도서관 자료 검색")
     st.caption("기존 /basic API 유지 · 자료유형 자동분류 · 검색에는 개인 OpenAI 키가 필요하지 않습니다.")
     if not admin_key:
@@ -325,22 +329,15 @@ def render_search_results(admin_key: str):
     else:
         st.caption(f"실제 검색어: {st.session_state.get('search_used_keyword', '')} · 검색 대상: {st.session_state.get('search_field', '전체')} · 유형별 건수는 현재 수집 자료 기준입니다.")
         st.caption("각 유형 안에서는 API가 반환한 순서를 유지합니다. 이 순서가 공식 웹사이트의 '정확도' 순위와 같다고 확인된 것은 아닙니다.")
-        for category, heading in (("학위논문", "🎓 1. 학위논문"), ("학술기사", "📄 2. 학술기사"), ("도서자료", "📚 3. 도서자료")):
-            _show_group(catalog[classes.eq(category)], heading)
+        render_catalog_picker(st, catalog, _go_reading)
+        st.caption("다른 자료를 비교하려면 아래 전체 목록을 펼치세요. 위 대분류 선택은 목록의 자료를 재분류하지 않습니다.")
+        with st.expander(f"📋 전체 검색 결과 목록 보기 ({len(catalog):,}건)", expanded=False):
+            for category, heading in (("학위논문", "🎓 1. 학위논문"), ("학술기사", "📄 2. 학술기사"), ("도서자료", "📚 3. 도서자료")):
+                _show_group(catalog[classes.eq(category)], heading)
         pending = catalog[classes.eq(UNKNOWN)]
         if not pending.empty:
             with st.expander(f"⚠ 자료유형 미확인 목록 ({len(pending)}건) — 근거 부족·충돌만 표시", expanded=False):
                 _inspect_pending(pending)
-        papers = st.session_state.get("paper_df", pd.DataFrame())
-        eligible = papers[papers["controlno"].map(bool)] if not papers.empty else papers
-        if not eligible.empty:
-            item = _choose_identity(identity_rows(eligible), widget_key="p0_read_control", memory_key="p0_read_selected",
-                label="읽을 논문 선택 (관리번호·제목·저자·연도)")
-            if item is not None:
-                st.write(f"선택 논문: {item[TITLE]}")
-                selected = control_number(item["record"])
-                st.button("📖 선택 논문을 02. 논문 읽기로 보내기", on_click=_go_reading, args=(selected,), key="p0_to_reading")
-        st.caption("학술기사 분류는 동료심사 여부를 보증하지 않습니다. 도서자료는 논문 선택 목록에 전달하지 않습니다.")
         enrichment = st.session_state.get("p0_enrichment", {})
         if enrichment:
             st.caption(f"공개 상세정보 보완: 이번 요청 {enrichment.get('요청 건수', 0)}건 / 변경 {enrichment.get('보완 건수', 0)}건. 로그인·차단·비공개 원문을 우회하지 않습니다.")

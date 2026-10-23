@@ -24,3 +24,11 @@
 User screenshot: identifier-only selector and unreadable unknown catalogue.
 Streamlit selectbox display labels can differ from returned option values: https://docs.streamlit.io/develop/api-reference/widgets/st.selectbox
 The UI displays metadata but selects by a stable internal identifier. This update does not add new library identifier-prefix rules.
+
+
+## v2.3.6 화면 구성 근거
+- Streamlit 1.42 st.container (key 기반 컨테이너·테두리): https://docs.streamlit.io/1.42.0/develop/api-reference/layout/st.container
+- Streamlit 1.42 st.selectbox (format_func, index=None, key): https://docs.streamlit.io/1.42.0/develop/api-reference/widgets/st.selectbox
+- Streamlit widget lifecycle / 독립 선택 메모: https://docs.streamlit.io/develop/concepts/architecture/widget-behavior
+- Streamlit AppTest: https://docs.streamlit.io/develop/api-reference/app-testing/st.testing.v1.apptest
+- 기준 소스: 사용자 대화의 id_release/paper.zip (v2.3.5-P0-ID). API·분류 엔진 변경 없음.
